@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Progress</title>
+  <script>
+    function updateProgress() {
+      fetch("/status")
+              .then(response => response.json())
+              .then(data => {
+                const progress = Math.min(100, Math.floor((data.progress / data.total_frames) * 100));
+                document.getElementById("progress-bar").style.width = progress + "%";
+                document.getElementById("progress-text").innerText = progress + "%";
+
+                if (data.completed) {
+                  document.getElementById("message").innerText = "Frames sent to queue. Consumer running...";
+                } else {
+                  setTimeout(updateProgress, 500);
+                }
+              });
+    }
+    window.onload = updateProgress;
+  </script>
+  <style>
+    #progress-container {
+      width: 100%;
+      background-color: #ddd;
+      margin: 20px 0;
+    }
+    #progress-bar {
+      width: 0%;
+      height: 30px;
+      background-color: #4caf50;
+    }
+  </style>
+</head>
+<body>
+<h1>Processing Video</h1>
+<div id="progress-container">
+  <div id="progress-bar"></div>
+</div>
+<p id="progress-text">0%</p>
+<p id="message"></p>
+</body>
+</html>
