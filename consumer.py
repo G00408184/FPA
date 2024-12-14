@@ -15,13 +15,12 @@ dataset = version.download("yolov11")
 connection = pika.BlockingConnection(pika.ConnectionParameters("localhost"))
 channel = connection.channel()
 
-# Make sure to declare the queue with the same settings as in the producer
+# Declare the queue with durability to match the producer
 channel.queue_declare(queue="frame_queue", durable=True)
 
 # Ensure the processed frames directory exists
 processed_frames_folder = "processed_frames"
 os.makedirs(processed_frames_folder, exist_ok=True)
-
 
 def callback(ch, method, properties, body):
     # Deserialize the frame
@@ -41,41 +40,29 @@ def callback(ch, method, properties, body):
 
     if results:
         for result in results:
-            # Get bounding box coordinates
-            x1, y1, x2, y2 = map(
-                int,
-                [
-                    result["x"] - result["width"] / 2,
-                    result["y"] - result["height"] / 2,
-                    result["x"] + result["width"] / 2,
-                    result["y"] + result["height"] / 2,
-                    ],
-            )
-
-            # Determine class type and assign corresponding color
             if result["class"] == "player":
-                color = (0, 255, 0)  # Green for players
-            elif result["class"] == "goalkeeper":
-                color = (255, 0, 0)  # Blue for goalkeepers
-            elif result["class"] == "referee":
-                color = (0, 0, 255)  # Red for referees
-            else:
-                continue
-
-            # Draw the bounding box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                x1, y1, x2, y2 = map(
+                    int,
+                    [
+                        result["x"] - result["width"] / 2,
+                        result["y"] - result["height"] / 2,
+                        result["x"] + result["width"] / 2,
+                        result["y"] + result["height"] / 2,
+                        ],
+                )
+                cv2.rectangle(
+                    frame, (x1, y1), (x2, y2), (0, 255, 0), 2
+                )  # Green for players
 
     # Save or send the processed frame
-    processed_frame_path = os.path.join(
-        processed_frames_folder, f"processed_frame_{frame_counter}.jpg"
-    )
+    processed_frame_path = os.path.join(processed_frames_folder, f"processed_frame_{frame_counter}.jpg")
     cv2.imwrite(processed_frame_path, frame)
 
     print(f"Processed frame {frame_counter}")
 
 
+# Consume messages from the queue
 channel.basic_consume(queue="frame_queue", on_message_callback=callback, auto_ack=True)
 
 print("Waiting for frames...")
 channel.start_consuming()
-print("Process finished Queue Empty!!")
