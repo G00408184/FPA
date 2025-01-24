@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
     Box, 
     Button, 
     LinearProgress, 
     Typography, 
-    Paper,
     Card,
     CardContent,
     Dialog,
@@ -17,8 +16,8 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DownloadIcon from '@mui/icons-material/Download';
-import WarningIcon from '@mui/icons-material/Warning';
 import CancelIcon from '@mui/icons-material/Cancel';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
@@ -30,10 +29,49 @@ const FileUpload = () => {
     const [error, setError] = useState('');
     const [status, setStatus] = useState('');
     const [videoReady, setVideoReady] = useState(false);
-    const [showWarning, setShowWarning] = useState(false);
     const [showSnackbar, setShowSnackbar] = useState(false);
     const [snackbarMessage, setSnackbarMessage] = useState('');
-    const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+    const [isProcessingComplete, setIsProcessingComplete] = useState(false);
+
+    useEffect(() => {
+        // Check if there's an ongoing processing when component mounts
+        checkProcessingStatus();
+    }, []);
+
+    const checkProcessingStatus = async () => {
+        try {
+            const response = await axios.get(`${BACKEND_URL}/consumer-status`);
+            const { frames_processed, total_frames, completed } = response.data;
+            
+            if (total_frames > 0) {
+                setUploading(true);
+                const progress = (frames_processed / total_frames) * 100;
+                setProcessingProgress(progress);
+                setStatus(`Processing: ${frames_processed}/${total_frames} frames`);
+
+                if (completed) {
+                    handleProcessingComplete();
+                } else {
+                    // Continue polling
+                    setTimeout(checkProcessingStatus, 1000);
+                }
+            }
+        } catch (error) {
+            console.error('Status check error:', error);
+            setTimeout(checkProcessingStatus, 1000);
+        }
+    };
+
+    const handleProcessingComplete = () => {
+        setIsProcessingComplete(true);
+        setUploading(false);
+        setStatus('Processing completed!');
+        setShowGenerateDialog(true);
+        // Play a notification sound
+        const audio = new Audio('/notification.mp3'); // Add a notification sound file to your public folder
+        audio.play().catch(e => console.log('Audio play failed:', e));
+    };
 
     const handleFileSelect = (event) => {
         const file = event.target.files[0];
@@ -47,64 +85,21 @@ const FileUpload = () => {
         }
     };
 
-    const pollProcessingStatus = async () => {
-        try {
-            const response = await axios.get(`${BACKEND_URL}/consumer-status`);
-            const { frames_processed, total_frames, completed } = response.data;
-            
-            if (total_frames > 0) {
-                const progress = (frames_processed / total_frames) * 100;
-                setProcessingProgress(progress);
-                setStatus(`Processing: ${frames_processed}/${total_frames} frames`);
-            }
-
-            if (!completed) {
-                setTimeout(pollProcessingStatus, 1000);
-            } else {
-                setStatus('Processing completed! Generating final video...');
-                // Automatically start video reconstruction
-                await handleGenerateVideo();
-            }
-        } catch (error) {
-            console.error('Status polling error:', error);
-            setTimeout(pollProcessingStatus, 1000);
-        }
-    };
-
-    const handleCancelProcessing = async () => {
-        try {
-            // Call backend to stop processing and clean up
-            await axios.post(`${BACKEND_URL}/cancel-processing`);
-            
-            setUploading(false);
-            setUploadProgress(0);
-            setProcessingProgress(0);
-            setStatus('Processing cancelled');
-            setShowCancelConfirm(false);
-            setSnackbarMessage('Processing cancelled successfully');
-            setShowSnackbar(true);
-        } catch (error) {
-            console.error('Cancel error:', error);
-            setError('Failed to cancel processing');
-        }
-    };
-
     const handleUpload = async () => {
         if (!selectedFile) return;
 
-        setShowWarning(false);
         setUploading(true);
         setError('');
         setStatus('Starting upload...');
         setVideoReady(false);
         setUploadProgress(0);
         setProcessingProgress(0);
+        setIsProcessingComplete(false);
 
         try {
             // Purge queue before starting
             await axios.post(`${BACKEND_URL}/purge-queue`);
             
-            // Upload file
             const formData = new FormData();
             formData.append('video', selectedFile);
             
@@ -118,12 +113,10 @@ const FileUpload = () => {
 
             setStatus('Upload complete. Starting processing...');
             
-            // Start processing
             await axios.post(`${BACKEND_URL}/start-producer`);
             await axios.post(`${BACKEND_URL}/start-consumer`);
             
-            // Start polling for progress
-            pollProcessingStatus();
+            checkProcessingStatus();
 
         } catch (error) {
             console.error('Upload/Processing error:', error);
@@ -136,19 +129,28 @@ const FileUpload = () => {
         try {
             setStatus('Generating final video...');
             await axios.post(`${BACKEND_URL}/generate-video`);
+            window.location.href = `${BACKEND_URL}/download-video`;
             setStatus('Video processing complete!');
-            setVideoReady(true);
-            setUploading(false);
-            setSnackbarMessage('Processing complete! You can now download your video.');
-            setShowSnackbar(true);
+            setShowGenerateDialog(false);
         } catch (error) {
             setError('Error generating video');
             console.error('Video generation error:', error);
         }
     };
 
-    const handleStartUpload = () => {
-        setShowWarning(true);
+    const handleCancelProcessing = async () => {
+        try {
+            await axios.post(`${BACKEND_URL}/cancel-processing`);
+            setUploading(false);
+            setUploadProgress(0);
+            setProcessingProgress(0);
+            setStatus('Processing cancelled');
+            setSnackbarMessage('Processing cancelled successfully');
+            setShowSnackbar(true);
+        } catch (error) {
+            console.error('Cancel error:', error);
+            setError('Failed to cancel processing');
+        }
     };
 
     return (
@@ -191,7 +193,7 @@ const FileUpload = () => {
                             <Button
                                 variant="contained"
                                 color="primary"
-                                onClick={handleStartUpload}
+                                onClick={handleUpload}
                                 disabled={uploading}
                             >
                                 Upload and Process
@@ -227,25 +229,12 @@ const FileUpload = () => {
                                     variant="contained"
                                     color="error"
                                     startIcon={<CancelIcon />}
-                                    onClick={() => setShowCancelConfirm(true)}
+                                    onClick={handleCancelProcessing}
                                     sx={{ ml: 2 }}
                                 >
                                     Cancel Processing
                                 </Button>
                             </Box>
-                        </Box>
-                    )}
-
-                    {videoReady && (
-                        <Box sx={{ textAlign: 'center', mt: 2 }}>
-                            <Button
-                                variant="contained"
-                                color="success"
-                                onClick={() => window.location.href = `${BACKEND_URL}/download-video`}
-                                startIcon={<DownloadIcon />}
-                            >
-                                Download Processed Video
-                            </Button>
                         </Box>
                     )}
 
@@ -257,56 +246,35 @@ const FileUpload = () => {
                 </CardContent>
             </Card>
 
-            {/* Warning Dialog */}
-            <Dialog open={showWarning} onClose={() => setShowWarning(false)}>
-                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <WarningIcon color="warning" />
-                    Important Notice
-                </DialogTitle>
-                <DialogContent>
-                    <Typography>
-                        Please do not close this tab or navigate away while the video is being processed. 
-                        This process may take several minutes depending on the video length.
-                    </Typography>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setShowWarning(false)}>Cancel</Button>
-                    <Button onClick={handleUpload} variant="contained" color="primary">
-                        Proceed
-                    </Button>
-                </DialogActions>
-            </Dialog>
-
-            {/* Cancel Confirmation Dialog */}
+            {/* Completion Dialog */}
             <Dialog
-                open={showCancelConfirm}
-                onClose={() => setShowCancelConfirm(false)}
+                open={showGenerateDialog}
+                onClose={() => setShowGenerateDialog(false)}
             >
                 <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <WarningIcon color="error" />
-                    Cancel Processing?
+                    <CheckCircleIcon color="success" />
+                    Processing Complete
                 </DialogTitle>
                 <DialogContent>
                     <Typography>
-                        This will stop all processing and delete all processed frames. 
-                        This action cannot be undone. Are you sure you want to continue?
+                        Video processing has been completed successfully. Would you like to generate and download the processed video?
                     </Typography>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setShowCancelConfirm(false)}>
-                        No, Continue Processing
+                    <Button onClick={() => setShowGenerateDialog(false)}>
+                        Not Now
                     </Button>
                     <Button 
-                        onClick={handleCancelProcessing}
+                        onClick={handleGenerateVideo}
                         variant="contained" 
-                        color="error"
+                        color="primary"
+                        startIcon={<DownloadIcon />}
                     >
-                        Yes, Cancel Processing
+                        Generate and Download Video
                     </Button>
                 </DialogActions>
             </Dialog>
 
-            {/* Status Snackbar */}
             <Snackbar
                 open={showSnackbar}
                 autoHideDuration={6000}
