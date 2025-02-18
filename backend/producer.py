@@ -163,6 +163,8 @@ def start_consumer():
         for _ in range(3):  # Start 3 consumer processes
             subprocess.Popen(["python", consumer_path], shell=True)
 
+
+
         print("Consumer processes started successfully")
         return jsonify({"message": "Consumers started successfully"}), 200
 
