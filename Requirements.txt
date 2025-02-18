@@ -1,0 +1,9 @@
+# Requirements for the backend
+flask             # Web framework for Python
+flask-cors        # Handle Cross-Origin Resource Sharing
+opencv-python     # Computer vision library for video processing
+numpy             # Numerical computing library
+torch             # PyTorch for deep learning
+ultralytics       # YOLOv8 implementation
+pika              # RabbitMQ client library
+roboflow          # Roboflow API client
