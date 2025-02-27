@@ -86,41 +86,31 @@ const FileUpload = () => {
     };
 
     const handleUpload = async () => {
-        if (!selectedFile) return;
-
-        setUploading(true);
-        setError('');
-        setStatus('Starting upload...');
-        setVideoReady(false);
-        setUploadProgress(0);
-        setProcessingProgress(0);
-        setIsProcessingComplete(false);
-
+        // ... existing code ...
         try {
-            // Purge queue before starting
-            await axios.post(`${BACKEND_URL}/purge-queue`);
-            
+            const purgeResponse = await axios.post(`${BACKEND_URL}/purge-queue`);
+            console.log('Purge response:', purgeResponse.data);
+    
             const formData = new FormData();
             formData.append('video', selectedFile);
             
-            await axios.post(`${BACKEND_URL}/upload`, formData, {
+            const uploadResponse = await axios.post(`${BACKEND_URL}/upload`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
-                onUploadProgress: (progressEvent) => {
-                    const progress = (progressEvent.loaded / progressEvent.total * 100);
-                    setUploadProgress(progress);
-                },
+                // ... progress callback ...
             });
-
-            setStatus('Upload complete. Starting processing...');
-            
-            await axios.post(`${BACKEND_URL}/start-producer`);
-            await axios.post(`${BACKEND_URL}/start-consumer`);
-            
-            checkProcessingStatus();
-
+            console.log('Upload response:', uploadResponse.data);
+    
+            const producerResponse = await axios.post(`${BACKEND_URL}/start-producer`);
+            console.log('Producer start:', producerResponse.data);
+    
+            const consumerResponse = await axios.post(`${BACKEND_URL}/start-consumer`);
+            console.log('Consumer start:', consumerResponse.data);
+    
+            // ... existing code ...
         } catch (error) {
-            console.error('Upload/Processing error:', error);
-            setError(error.response?.data?.error || 'Upload failed. Please try again.');
+            console.error('Full error:', error);
+            console.error('Error response:', error.response);
+            setError(error.response?.data?.error || error.message || 'Upload failed');  // Modified
             setUploading(false);
         }
     };
@@ -273,6 +263,7 @@ const FileUpload = () => {
                         Generate and Download Video
                     </Button>
                 </DialogActions>
+                 
             </Dialog>
 
             <Snackbar
