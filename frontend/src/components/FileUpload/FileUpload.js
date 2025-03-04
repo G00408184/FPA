@@ -1,23 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import axios from 'axios';
-import { 
-    Box, 
-    Button, 
-    LinearProgress, 
-    Typography, 
+import {
+    Box,
+    Button,
     Card,
     CardContent,
+    Typography,
+    LinearProgress,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
-    Alert,
-    Snackbar
+    Snackbar,
+    Alert
 } from '@mui/material';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import DownloadIcon from '@mui/icons-material/Download';
-import CancelIcon from '@mui/icons-material/Cancel';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import {
+    CloudUpload as CloudUploadIcon,
+    Cancel as CancelIcon,
+    CheckCircle as CheckCircleIcon,
+    Download as DownloadIcon
+} from '@mui/icons-material';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
 
@@ -34,11 +36,6 @@ const FileUpload = () => {
     const [showGenerateDialog, setShowGenerateDialog] = useState(false);
     const [isProcessingComplete, setIsProcessingComplete] = useState(false);
 
-    useEffect(() => {
-        // Check if there's an ongoing processing when component mounts
-        checkProcessingStatus();
-    }, []);
-
     const checkProcessingStatus = async () => {
         try {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
@@ -49,11 +46,10 @@ const FileUpload = () => {
                 const progress = (frames_processed / total_frames) * 100;
                 setProcessingProgress(progress);
                 setStatus(`Processing: ${frames_processed}/${total_frames} frames`);
-
+                
                 if (completed) {
                     handleProcessingComplete();
                 } else {
-                    // Continue polling
                     setTimeout(checkProcessingStatus, 1000);
                 }
             }
@@ -68,8 +64,7 @@ const FileUpload = () => {
         setUploading(false);
         setStatus('Processing completed!');
         setShowGenerateDialog(true);
-        // Play a notification sound
-        const audio = new Audio('/notification.mp3'); // Add a notification sound file to your public folder
+        const audio = new Audio('/notification.mp3');
         audio.play().catch(e => console.log('Audio play failed:', e));
     };
 
@@ -86,31 +81,40 @@ const FileUpload = () => {
     };
 
     const handleUpload = async () => {
-        // ... existing code ...
+        if (!selectedFile) return;
+
+        setUploading(true);
+        setError('');
+        setStatus('Starting upload...');
+        setVideoReady(false);
+        setUploadProgress(0);
+        setProcessingProgress(0);
+        setIsProcessingComplete(false);
+
         try {
-            const purgeResponse = await axios.post(`${BACKEND_URL}/purge-queue`);
-            console.log('Purge response:', purgeResponse.data);
-    
+            await axios.post(`${BACKEND_URL}/purge-queue`);
+            
             const formData = new FormData();
             formData.append('video', selectedFile);
             
-            const uploadResponse = await axios.post(`${BACKEND_URL}/upload`, formData, {
+            await axios.post(`${BACKEND_URL}/upload`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
-                // ... progress callback ...
+                onUploadProgress: (progressEvent) => {
+                    const progress = (progressEvent.loaded / progressEvent.total * 100);
+                    setUploadProgress(progress);
+                },
             });
-            console.log('Upload response:', uploadResponse.data);
-    
-            const producerResponse = await axios.post(`${BACKEND_URL}/start-producer`);
-            console.log('Producer start:', producerResponse.data);
-    
-            const consumerResponse = await axios.post(`${BACKEND_URL}/start-consumer`);
-            console.log('Consumer start:', consumerResponse.data);
-    
-            // ... existing code ...
+
+            setStatus('Upload complete. Starting processing...');
+            
+            await axios.post(`${BACKEND_URL}/start-producer`);
+            await axios.post(`${BACKEND_URL}/start-consumer`);
+            
+            checkProcessingStatus();
+
         } catch (error) {
-            console.error('Full error:', error);
-            console.error('Error response:', error.response);
-            setError(error.response?.data?.error || error.message || 'Upload failed');  // Modified
+            console.error('Upload/Processing error:', error);
+            setError(error.response?.data?.error || 'Upload failed. Please try again.');
             setUploading(false);
         }
     };
@@ -132,13 +136,9 @@ const FileUpload = () => {
         try {
             await axios.post(`${BACKEND_URL}/cancel-processing`);
             setUploading(false);
-            setUploadProgress(0);
-            setProcessingProgress(0);
             setStatus('Processing cancelled');
-            setSnackbarMessage('Processing cancelled successfully');
-            setShowSnackbar(true);
         } catch (error) {
-            console.error('Cancel error:', error);
+            console.error('Cancel processing error:', error);
             setError('Failed to cancel processing');
         }
     };
@@ -263,7 +263,6 @@ const FileUpload = () => {
                         Generate and Download Video
                     </Button>
                 </DialogActions>
-                 
             </Dialog>
 
             <Snackbar
