@@ -40,26 +40,18 @@ def setup_rabbitmq():
                     host='localhost',
                     heartbeat=600,
                     connection_attempts=3,
-                    retry_delay=5,
-                    socket_timeout=10
+                    retry_delay=5
                 )
             )
-       
+        
         if channel is None or channel.is_closed:
             print("Creating new channel...")
             channel = rabbitmq_connection.channel()
-           
-            # Delete the queue if it exists
-            try:
-                channel.queue_delete(queue="frame_queue")
-            except Exception:
-                pass
-           
-            # Declare the queue with consistent arguments
+            
+            # Declare queue with simple settings
             channel.queue_declare(
-                queue="frame_queue",
-                durable=True,
-                arguments=QUEUE_ARGUMENTS
+                queue="frame_queue", 
+                durable=True
             )
  
     except Exception as e:
@@ -96,18 +88,18 @@ def process_video(video_path):
                 break
  
             try:
-                # Resize frame to reduce size (adjust dimensions as needed)
-                frame = cv2.resize(frame, (640, 480))
-                
-                # Compress frame to reduce size
-                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+                # Don't resize the frame to preserve details for better detection
+                # frame = cv2.resize(frame, (640, 480))
+               
+                # Compress frame with higher quality to preserve details
+                encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 95]
                 _, buffer = cv2.imencode('.jpg', frame, encode_param)
                 compressed_frame = buffer.tobytes()
-                
+               
                 # Add delay every 5 frames
                 if frame_count % 5 == 0:
                     time.sleep(0.1)
-                
+               
                 channel.basic_publish(
                     exchange="",
                     routing_key="frame_queue",
@@ -117,18 +109,18 @@ def process_video(video_path):
                         content_type="application/pickle"
                     ),
                 )
-                
+               
                 frame_count += 1
                 processing_status["progress"] = frame_count
-                
+               
                 print(f"Published frame {frame_count}/{total_frames}")
-                
+               
                 # Periodically check connection and channel
                 if frame_count % 10 == 0:
                     if channel.is_closed or rabbitmq_connection.is_closed:
                         print("Connection lost, attempting to reconnect...")
                         setup_rabbitmq()
-                
+               
             except pika.exceptions.ChannelClosedByBroker:
                 print("Queue full or unreachable! Attempting to reconnect...")
                 setup_rabbitmq()
@@ -407,3 +399,5 @@ if __name__ == "__main__":
                 rabbitmq_connection.close()
             except Exception:
                 pass
+
+
