@@ -1,9 +1,13 @@
 # Requirements for the backend
-flask             # Web framework for Python
-flask-cors        # Handle Cross-Origin Resource Sharing
-opencv-python     # Computer vision library for video processing
-numpy             # Numerical computing library
-torch             # PyTorch for deep learning
+flask==2.0.1
+flask-cors==3.0.10
+werkzeug==2.0.3
+opencv-python==4.11.0.86
+numpy>=1.22.0
+torch>=1.12.0             # PyTorch for deep learning
 ultralytics       # YOLOv8 implementation
-pika              # RabbitMQ client library
-roboflow          # Roboflow API client
+pika==1.2.0
+roboflow>=0.2.27
+scikit-learn>=1.0.2
+Pillow>=8.3.1
+waitress==2.0.0
