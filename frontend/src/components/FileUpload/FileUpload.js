@@ -1,26 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { 
-    Box, 
-    Button, 
-    LinearProgress, 
-    Typography, 
+import {
+    Box,
+    Button,
     Card,
     CardContent,
+    Typography,
+    LinearProgress,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
-    Alert,
-    Snackbar
+    Snackbar,
+    Alert
 } from '@mui/material';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
-import DownloadIcon from '@mui/icons-material/Download';
-import CancelIcon from '@mui/icons-material/Cancel';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-
+import {
+    CloudUpload as CloudUploadIcon,
+    Cancel as CancelIcon,
+    CheckCircle as CheckCircleIcon,
+    Download as DownloadIcon
+} from '@mui/icons-material';
+ 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
-
+ 
 const FileUpload = () => {
     const [selectedFile, setSelectedFile] = useState(null);
     const [uploading, setUploading] = useState(false);
@@ -33,7 +35,7 @@ const FileUpload = () => {
     const [snackbarMessage, setSnackbarMessage] = useState('');
     const [showGenerateDialog, setShowGenerateDialog] = useState(false);
     const [isProcessingComplete, setIsProcessingComplete] = useState(false);
-
+ 
     useEffect(() => {
         // Check if there's an ongoing processing when component mounts
         checkProcessingStatus();
@@ -43,17 +45,16 @@ const FileUpload = () => {
         try {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
             const { frames_processed, total_frames, completed } = response.data;
-            
+           
             if (total_frames > 0) {
                 setUploading(true);
                 const progress = (frames_processed / total_frames) * 100;
                 setProcessingProgress(progress);
                 setStatus(`Processing: ${frames_processed}/${total_frames} frames`);
-
+               
                 if (completed) {
                     handleProcessingComplete();
                 } else {
-                    // Continue polling
                     setTimeout(checkProcessingStatus, 1000);
                 }
             }
@@ -62,17 +63,16 @@ const FileUpload = () => {
             setTimeout(checkProcessingStatus, 1000);
         }
     };
-
+ 
     const handleProcessingComplete = () => {
         setIsProcessingComplete(true);
         setUploading(false);
         setStatus('Processing completed!');
         setShowGenerateDialog(true);
-        // Play a notification sound
-        const audio = new Audio('/notification.mp3'); // Add a notification sound file to your public folder
+        const audio = new Audio('/notification.mp3');
         audio.play().catch(e => console.log('Audio play failed:', e));
     };
-
+ 
     const handleFileSelect = (event) => {
         const file = event.target.files[0];
         if (file && file.type.startsWith('video/')) {
@@ -84,10 +84,10 @@ const FileUpload = () => {
             setSelectedFile(null);
         }
     };
-
+ 
     const handleUpload = async () => {
         if (!selectedFile) return;
-
+ 
         setUploading(true);
         setError('');
         setStatus('Starting upload...');
@@ -95,14 +95,13 @@ const FileUpload = () => {
         setUploadProgress(0);
         setProcessingProgress(0);
         setIsProcessingComplete(false);
-
+ 
         try {
-            // Purge queue before starting
             await axios.post(`${BACKEND_URL}/purge-queue`);
-            
+           
             const formData = new FormData();
             formData.append('video', selectedFile);
-            
+           
             await axios.post(`${BACKEND_URL}/upload`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (progressEvent) => {
@@ -110,21 +109,21 @@ const FileUpload = () => {
                     setUploadProgress(progress);
                 },
             });
-
+ 
             setStatus('Upload complete. Starting processing...');
-            
+           
             await axios.post(`${BACKEND_URL}/start-producer`);
             await axios.post(`${BACKEND_URL}/start-consumer`);
-            
+           
             checkProcessingStatus();
-
+ 
         } catch (error) {
             console.error('Upload/Processing error:', error);
             setError(error.response?.data?.error || 'Upload failed. Please try again.');
             setUploading(false);
         }
     };
-
+ 
     const handleGenerateVideo = async () => {
         try {
             setStatus('Generating final video...');
@@ -137,36 +136,32 @@ const FileUpload = () => {
             console.error('Video generation error:', error);
         }
     };
-
+ 
     const handleCancelProcessing = async () => {
         try {
             await axios.post(`${BACKEND_URL}/cancel-processing`);
             setUploading(false);
-            setUploadProgress(0);
-            setProcessingProgress(0);
             setStatus('Processing cancelled');
-            setSnackbarMessage('Processing cancelled successfully');
-            setShowSnackbar(true);
         } catch (error) {
-            console.error('Cancel error:', error);
+            console.error('Cancel processing error:', error);
             setError('Failed to cancel processing');
         }
     };
-
+ 
     return (
-        <Box sx={{ maxWidth: 600, margin: '0 auto' }}>
-            <Card elevation={3} sx={{ mb: 3, bgcolor: 'background.paper' }}>
-                <CardContent>
-                    <Typography variant="h5" gutterBottom align="center">
-                        Video Analysis
+        <div className="max-w-3xl mx-auto p-4">
+            <Card elevation={3} className="mb-6 bg-white rounded-lg shadow-lg overflow-hidden">
+                <CardContent className="p-6">
+                    <Typography variant="h5" className="text-center font-bold text-gray-800 mb-6">
+                        Football Player Analysis
                     </Typography>
-
-                    <Box sx={{ textAlign: 'center', mb: 3 }}>
+ 
+                    <div className="text-center mb-6">
                         <input
                             type="file"
                             accept="video/*"
                             onChange={handleFileSelect}
-                            style={{ display: 'none' }}
+                            className="hidden"
                             id="video-upload-input"
                         />
                         <label htmlFor="video-upload-input">
@@ -175,118 +170,121 @@ const FileUpload = () => {
                                 component="span"
                                 startIcon={<CloudUploadIcon />}
                                 disabled={uploading}
+                                className="mb-4 bg-primary-600 hover:bg-primary-700 transition-all duration-300"
                                 sx={{ mb: 2 }}
                             >
                                 Select Video
                             </Button>
                         </label>
-
+ 
                         {selectedFile && (
-                            <Typography variant="body2" color="textSecondary">
+                            <Typography variant="body2" className="text-gray-600 italic">
                                 Selected file: {selectedFile.name}
                             </Typography>
                         )}
-                    </Box>
-
+                    </div>
+ 
                     {selectedFile && !uploading && (
-                        <Box sx={{ textAlign: 'center' }}>
+                        <div className="text-center">
                             <Button
                                 variant="contained"
                                 color="primary"
                                 onClick={handleUpload}
                                 disabled={uploading}
+                                className="bg-primary-600 hover:bg-primary-700 transition-all duration-300 px-6 py-2"
                             >
                                 Upload and Process
                             </Button>
-                        </Box>
+                        </div>
                     )}
-
+ 
                     {uploading && (
-                        <Box sx={{ mt: 3 }}>
-                            <Typography variant="body2" gutterBottom>
-                                Upload Progress:
-                            </Typography>
-                            <LinearProgress 
-                                variant="determinate" 
-                                value={uploadProgress} 
-                                sx={{ mb: 2, height: 8, borderRadius: 2 }}
-                            />
-
-                            <Typography variant="body2" gutterBottom>
-                                Processing Progress:
-                            </Typography>
-                            <LinearProgress 
-                                variant="determinate" 
-                                value={processingProgress} 
-                                sx={{ mb: 2, height: 8, borderRadius: 2 }}
-                            />
-
-                            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
-                                <Typography variant="body2" align="center">
-                                    {status}
+                        <div className="mt-6 space-y-4">
+                            <div>
+                                <Typography variant="body2" className="font-medium text-gray-700 mb-1">
+                                    Upload Progress:
                                 </Typography>
+                                <LinearProgress
+                                    variant="determinate"
+                                    value={uploadProgress}
+                                    className="h-2 rounded-full"
+                                    sx={{ mb: 2, height: 8, borderRadius: 2 }}
+                                />
+                            </div>
+ 
+                            <div>
+                                <Typography variant="body2" className="font-medium text-gray-700 mb-1">
+                                    Processing Progress:
+                                </Typography>
+                                <LinearProgress
+                                    variant="determinate"
+                                    value={processingProgress}
+                                    className="h-2 rounded-full"
+                                    sx={{ mb: 2, height: 8, borderRadius: 2 }}
+                                />
+                            </div>
+ 
+                            <div className="flex justify-center items-center gap-4 mt-4">
+                                <div className="text-center text-gray-700 font-medium">
+                                    {status}
+                                </div>
                                 <Button
                                     variant="contained"
                                     color="error"
                                     startIcon={<CancelIcon />}
                                     onClick={handleCancelProcessing}
-                                    sx={{ ml: 2 }}
+                                    className="bg-red-600 hover:bg-red-700"
                                 >
-                                    Cancel Processing
+                                    Cancel
                                 </Button>
-                            </Box>
-                        </Box>
+                            </div>
+                        </div>
                     )}
-
+ 
                     {error && (
-                        <Typography color="error" align="center" sx={{ mt: 2 }}>
+                        <Typography className="text-center text-red-600 mt-4 font-medium">
                             {error}
                         </Typography>
                     )}
                 </CardContent>
             </Card>
-
+ 
             {/* Completion Dialog */}
             <Dialog
                 open={showGenerateDialog}
                 onClose={() => setShowGenerateDialog(false)}
+                PaperProps={{
+                    className: "rounded-lg"
+                }}
             >
-                <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <CheckCircleIcon color="success" />
+                <DialogTitle className="flex items-center gap-2 bg-green-50 text-green-800 py-4">
+                    <CheckCircleIcon className="text-green-600" />
                     Processing Complete
                 </DialogTitle>
-                <DialogContent>
-                    <Typography>
+                <DialogContent className="py-6">
+                    <Typography className="text-gray-700">
                         Video processing has been completed successfully. Would you like to generate and download the processed video?
                     </Typography>
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setShowGenerateDialog(false)}>
-                        Not Now
-                    </Button>
+                <DialogActions className="p-4">
                     <Button 
-                        onClick={handleGenerateVideo}
-                        variant="contained" 
-                        color="primary"
-                        startIcon={<DownloadIcon />}
+                        onClick={() => setShowGenerateDialog(false)}
+                        className="text-gray-700 hover:bg-gray-100"
                     >
-                        Generate and Download Video
+                        Cancel
+                    </Button>
+                    <Button
+                        variant="contained"
+                        startIcon={<DownloadIcon />}
+                        onClick={handleGenerateVideo}
+                        className="bg-primary-600 hover:bg-primary-700"
+                    >
+                        Generate & Download
                     </Button>
                 </DialogActions>
             </Dialog>
-
-            <Snackbar
-                open={showSnackbar}
-                autoHideDuration={6000}
-                onClose={() => setShowSnackbar(false)}
-                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-            >
-                <Alert onClose={() => setShowSnackbar(false)} severity="info" sx={{ width: '100%' }}>
-                    {snackbarMessage}
-                </Alert>
-            </Snackbar>
-        </Box>
+        </div>
     );
 };
-
+ 
 export default FileUpload;
