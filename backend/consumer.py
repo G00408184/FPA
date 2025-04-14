@@ -7,6 +7,8 @@ from roboflow import Roboflow
 import json
 from time import sleep
 from sklearn.cluster import KMeans
+import traceback
+import time
 
 # Set up the Roboflow client
 rf = Roboflow(api_key="VpUIVQYxyMgXli0e0uC1")
@@ -173,15 +175,15 @@ def process_frame(ch, method, properties, body):
         if not isinstance(frame, np.ndarray):
             raise ValueError("Invalid frame data received")
 
+        # Create a frame to display
+        display_frame = frame.copy()
+
         # Save frame temporarily for Roboflow
         temp_path = os.path.join(PROCESSED_FRAMES_DIR, f"temp_{frame_count}.jpg")
         cv2.imwrite(temp_path, frame)
 
-        # Run inference
+        # Run inference with optimized parameters
         predictions = model.predict(temp_path, confidence=40, overlap=30).json()
-
-        # Create a frame to display
-        display_frame = frame.copy()
 
         # Count of detections per team
         team_counts = {1: 0, 2: 0, "referee": 0, "unassigned": 0}
@@ -287,34 +289,47 @@ def process_frame(ch, method, properties, body):
                 2,
             )
 
-        # Save processed frame
+        # Save processed frame with optimized compression
         output_path = os.path.join(PROCESSED_FRAMES_DIR, f"frame_{frame_count}.jpg")
-        cv2.imwrite(output_path, display_frame)
+        cv2.imwrite(output_path, display_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         # Clean up temp file
-        os.remove(temp_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
-        # Update status
-        status = {"frame": frame_count, "status": "processed"}
+        # Update status file with frame count and team stats
+        try:
+            with open("consumer_status.json", "r") as f:
+                status = json.load(f)
+        except:
+            status = {
+                "frames_processed": 0,
+                "total_frames": 0,
+                "completed": False,
+                "team_stats": {"team1_possession": 0, "team2_possession": 0},
+            }
+
+        status["frames_processed"] = frame_count + 1
+        status["last_frame"] = frame_count
+
         with open("consumer_status.json", "w") as f:
             json.dump(status, f)
+
+        print(f"Processed frame {frame_count}")
 
     except Exception as e:
         print(f"Error processing frame {frame_count}: {str(e)}")
-        # Update status with error
-        status = {"frame": frame_count, "status": "error", "message": str(e)}
-        with open("consumer_status.json", "w") as f:
-            json.dump(status, f)
-
+        traceback.print_exc()
     finally:
-        # Acknowledge the message
+        # Always acknowledge the message to remove it from the queue
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def start_consuming():
     while True:
         try:
-            # Connect to RabbitMQ
+            print("Attempting to connect to RabbitMQ...")
+            # Create a connection to RabbitMQ with retry parameters
             connection = pika.BlockingConnection(
                 pika.ConnectionParameters(
                     host="localhost",
@@ -326,50 +341,77 @@ def start_consuming():
             )
             channel = connection.channel()
 
-            # Declare queue
-            channel.queue_declare(queue="frame_queue", durable=True)
+            print("Connected to RabbitMQ successfully")
 
-            # Set prefetch count to 1 for better load balancing
+            # Declare the queue with proper settings - use passive=True to only check if it exists
+            try:
+                channel.queue_declare(
+                    queue="frame_queue",
+                    passive=True,  # Only check if exists, don't try to create
+                )
+                print("Connected to existing queue")
+            except Exception as e:
+                print(
+                    f"Queue doesn't exist yet, waiting for producer to create it: {str(e)}"
+                )
+                time.sleep(2)
+                continue
+
+            # Set QoS - process one message at a time
             channel.basic_qos(prefetch_count=1)
 
-            # Start consuming
             print("Consumer started. Waiting for frames...")
 
+            # Set up consumer with manual acknowledgment
             channel.basic_consume(
-                queue="frame_queue", on_message_callback=process_frame
+                queue="frame_queue",
+                on_message_callback=process_frame,
+                auto_ack=False,  # Important: manual acknowledgment
             )
 
+            # Start consuming
             channel.start_consuming()
 
-        except pika.exceptions.ConnectionClosedByBroker as e:
-            print(f"Connection was closed by broker: {e}, retrying...")
-            sleep(5)
+        except pika.exceptions.ConnectionClosedByBroker:
+            print("Connection was closed by broker, retrying in 5 seconds...")
+            time.sleep(5)
             continue
         except pika.exceptions.AMQPConnectionError:
-            print("Lost connection to RabbitMQ, retrying...")
-            sleep(5)
+            print("Lost connection to RabbitMQ, retrying in 5 seconds...")
+            time.sleep(5)
             continue
+        except KeyboardInterrupt:
+            print("Stopping consumer...")
+            try:
+                if channel:
+                    channel.close()
+                if connection:
+                    connection.close()
+            except:
+                pass
+            break
         except Exception as e:
             print(f"Consumer error: {str(e)}")
-            sleep(5)
+            traceback.print_exc()
+            print("Retrying in 5 seconds...")
+            time.sleep(5)
             continue
 
 
 if __name__ == "__main__":
-    # Clean up any temporary files
-    for f in os.listdir(PROCESSED_FRAMES_DIR):
-        if f.startswith("temp_"):
-            os.remove(os.path.join(PROCESSED_FRAMES_DIR, f))
+    # Ensure the processed frames directory exists
+    if not os.path.exists(PROCESSED_FRAMES_DIR):
+        os.makedirs(PROCESSED_FRAMES_DIR)
 
-    # Create or reset the consumer status file
-    status_data = {
+    # Initialize status file
+    status = {
         "frames_processed": 0,
-        "last_frame": 0,
+        "total_frames": 0,
+        "completed": False,
         "team_stats": {"team1_possession": 0, "team2_possession": 0},
     }
-
     with open("consumer_status.json", "w") as f:
-        json.dump(status_data, f)
+        json.dump(status, f)
 
-    # Start consuming
+    print("Starting consumer process...")
     start_consuming()
