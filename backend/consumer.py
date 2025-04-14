@@ -26,6 +26,17 @@ class TeamAssigner:
         self.team_colors = {}
         self.player_team_dict = {}
         self.teams_initialized = False
+        # Reference colors for teams (RGB format)
+        self.reference_colors = {
+            1: np.array([255, 255, 255]),  # White/Light team
+            2: np.array([0, 0, 0]),  # Dark team
+        }
+        # Color distance threshold for team reassignment
+        self.color_distance_threshold = 150.0
+
+    def color_distance(self, color1, color2):
+        """Calculate Euclidean distance between two colors"""
+        return np.sqrt(np.sum((color1 - color2) ** 2))
 
     def get_player_color(self, frame, bbox):
         """Extract player jersey color using K-means clustering"""
@@ -46,7 +57,9 @@ class TeamAssigner:
         image_2d = player_image.reshape(-1, 3)
 
         # K-means clustering with 2 clusters (player jersey and background)
-        kmeans = KMeans(n_clusters=2, random_state=0)
+        kmeans = KMeans(
+            n_clusters=2, random_state=42
+        )  # Fixed random state for consistency
         kmeans.fit(image_2d)
 
         # Get cluster labels
@@ -72,7 +85,7 @@ class TeamAssigner:
 
     def assign_teams(self, frame, player_detections):
         """Initialize team colors by clustering player colors"""
-        if len(player_detections) < 4:  # Need enough players for reliable clustering
+        if self.teams_initialized or len(player_detections) < 4:
             return
 
         # Extract colors from all detected players
@@ -96,30 +109,67 @@ class TeamAssigner:
             return
 
         # Cluster player colors into two teams
-        team_kmeans = KMeans(n_clusters=2, random_state=0)
-        team_labels = team_kmeans.fit_predict(np.array(player_colors))
+        team_kmeans = KMeans(
+            n_clusters=2, random_state=42
+        )  # Fixed random state for consistency
+        team_kmeans.fit(np.array(player_colors))
 
-        # Store team colors
-        self.team_colors[1] = team_kmeans.cluster_centers_[0]
-        self.team_colors[2] = team_kmeans.cluster_centers_[1]
+        # Get cluster centers
+        centers = team_kmeans.cluster_centers_
 
-        # Assign players to teams
+        # Assign teams based on similarity to reference colors
+        dist_1_0 = self.color_distance(centers[0], self.reference_colors[1])
+        dist_1_1 = self.color_distance(centers[1], self.reference_colors[1])
+
+        if dist_1_0 < dist_1_1:
+            self.team_colors[1] = centers[0]  # Lighter team
+            self.team_colors[2] = centers[1]  # Darker team
+        else:
+            self.team_colors[1] = centers[1]  # Lighter team
+            self.team_colors[2] = centers[0]  # Darker team
+
+        # Assign players to teams based on their colors
+        team_labels = team_kmeans.labels_
         for i, player_id in enumerate(player_ids):
-            self.player_team_dict[player_id] = team_labels[i] + 1  # Teams 1 and 2
+            team_id = 1 if team_labels[i] == (0 if dist_1_0 < dist_1_1 else 1) else 2
+            self.player_team_dict[player_id] = team_id
 
-        print(f"Team 1 color: {self.team_colors[1]}")
-        print(f"Team 2 color: {self.team_colors[2]}")
+        print(f"Team 1 (Light) color: {self.team_colors[1]}")
+        print(f"Team 2 (Dark) color: {self.team_colors[2]}")
         self.teams_initialized = True
 
     def get_player_team(self, frame, bbox, player_id):
         """Determine which team a player belongs to"""
         if player_id in self.player_team_dict:
-            return self.player_team_dict[player_id]
+            # Get the current color and compare with stored team colors
+            current_color = self.get_player_color(frame, bbox)
+            team_id = self.player_team_dict[player_id]
 
-        # Calculate distance to each team's color center
+            if team_id in [1, 2]:  # Only check if it's a team player (not referee)
+                stored_color = self.team_colors[team_id]
+                color_diff = self.color_distance(current_color, stored_color)
+
+                # If color has changed significantly, reassign team
+                if color_diff > self.color_distance_threshold:
+                    # Calculate distances to both team colors
+                    dist_team1 = self.color_distance(current_color, self.team_colors[1])
+                    dist_team2 = self.color_distance(current_color, self.team_colors[2])
+
+                    # Assign to closest team
+                    new_team_id = 1 if dist_team1 < dist_team2 else 2
+                    if new_team_id != team_id:
+                        print(
+                            f"Reassigning player {player_id} from team {team_id} to team {new_team_id}"
+                        )
+                        self.player_team_dict[player_id] = new_team_id
+                        return new_team_id
+
+            return team_id
+
+        # For new players, calculate distances to team colors
         player_color = self.get_player_color(frame, bbox)
-        dist_team1 = np.sum((player_color - self.team_colors[1]) ** 2)
-        dist_team2 = np.sum((player_color - self.team_colors[2]) ** 2)
+        dist_team1 = self.color_distance(player_color, self.team_colors[1])
+        dist_team2 = self.color_distance(player_color, self.team_colors[2])
 
         # Assign to closest team
         team_id = 1 if dist_team1 < dist_team2 else 2
