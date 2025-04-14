@@ -1,56 +1,143 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
-    Box,
     Button,
-    Card,
-    CardContent,
-    Typography,
-    LinearProgress,
     Dialog,
     DialogTitle,
     DialogContent,
     DialogActions,
+    LinearProgress,
+    Alert,
     Snackbar,
-    Alert
+    Box,
+    Typography,
+    styled
 } from '@mui/material';
 import {
     CloudUpload as CloudUploadIcon,
+    VideoLibrary as VideoLibraryIcon,
     Cancel as CancelIcon,
     CheckCircle as CheckCircleIcon,
-    Download as DownloadIcon
+    Error as ErrorIcon,
+    PlayArrow as PlayArrowIcon
 } from '@mui/icons-material';
- 
+import { motion } from 'framer-motion';
+
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
- 
+
+// Log the backend URL to help with debugging
+console.log('Using backend URL:', BACKEND_URL);
+
+// Check if backend is available every 10 seconds to handle reconnection scenarios
+const useBackendStatus = () => {
+    const [isAvailable, setIsAvailable] = useState(false);
+    const [isChecking, setIsChecking] = useState(true);
+    
+    useEffect(() => {
+        const checkAvailability = async () => {
+            setIsChecking(true);
+            try {
+                // Try various endpoints to see if the backend is responsive
+                try {
+                    await axios.get(`${BACKEND_URL}/health`, { timeout: 3000 });
+                    setIsAvailable(true);
+                    return;
+                } catch (healthError) {
+                    console.log('Health endpoint failed, trying status...');
+                }
+                
+                try {
+                    await axios.get(`${BACKEND_URL}/status`, { timeout: 3000 });
+                    setIsAvailable(true);
+                    return;
+                } catch (statusError) {
+                    console.log('Status endpoint failed, trying root...');
+                }
+                
+                // Last resort - just try to hit the root
+                await axios.get(`${BACKEND_URL}`, { timeout: 3000 });
+                setIsAvailable(true);
+            } catch (error) {
+                console.error('Backend connection error:', error);
+                setIsAvailable(false);
+            } finally {
+                setIsChecking(false);
+            }
+        };
+        
+        // Initial check
+        checkAvailability();
+        
+        // Set up periodic checking
+        const interval = setInterval(checkAvailability, 10000);
+        
+        return () => clearInterval(interval);
+    }, []);
+    
+    return { isAvailable, isChecking };
+};
+
+// Styled components for Material UI + Tailwind integration
+const StyledButton = styled(Button)(({ theme }) => ({
+    marginTop: theme.spacing(1),
+    marginBottom: theme.spacing(1),
+    borderRadius: 8,
+    fontWeight: 500,
+}));
+
+const VisuallyHiddenInput = styled('input')({
+    clip: 'rect(0 0 0 0)',
+    clipPath: 'inset(50%)',
+    height: 1,
+    overflow: 'hidden',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    whiteSpace: 'nowrap',
+    width: 1,
+});
+
 const FileUpload = () => {
-    const [selectedFile, setSelectedFile] = useState(null);
+    const [file, setFile] = useState(null);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(0);
     const [processingProgress, setProcessingProgress] = useState(0);
     const [error, setError] = useState('');
-    const [status, setStatus] = useState('');
-    const [videoReady, setVideoReady] = useState(false);
     const [showSnackbar, setShowSnackbar] = useState(false);
     const [snackbarMessage, setSnackbarMessage] = useState('');
     const [showGenerateDialog, setShowGenerateDialog] = useState(false);
-    const [isProcessingComplete, setIsProcessingComplete] = useState(false);
- 
-    useEffect(() => {
-        // Check if there's an ongoing processing when component mounts
-        checkProcessingStatus();
+    const [success, setSuccess] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [uploadComplete, setUploadComplete] = useState(false);
+    
+    // Use our custom hook to check backend status but add option to force real backend
+    const { isAvailable: backendAvailableStatus, isChecking: checkingBackend } = useBackendStatus();
+    const [forceRealBackend, setForceRealBackend] = useState(true); // Force using real backend
+    
+    // Effective backend availability combines status and force flag
+    const backendAvailable = backendAvailableStatus || forceRealBackend;
+
+    const handleProcessingComplete = useCallback(() => {
+        setUploading(false);
+        setIsProcessing(false);
+        setSnackbarMessage('Processing completed!');
+        setShowSnackbar(true);
+        setShowGenerateDialog(true);
+        const audio = new Audio('/notification.mp3');
+        audio.play().catch(e => console.log('Audio play failed:', e));
     }, []);
 
-    const checkProcessingStatus = async () => {
+    const checkProcessingStatus = useCallback(async () => {
         try {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
             const { frames_processed, total_frames, completed } = response.data;
            
             if (total_frames > 0) {
-                setUploading(true);
+                setIsProcessing(true);
                 const progress = (frames_processed / total_frames) * 100;
                 setProcessingProgress(progress);
-                setStatus(`Processing: ${frames_processed}/${total_frames} frames`);
+                setSnackbarMessage(`Processing: ${frames_processed}/${total_frames} frames`);
+                setShowSnackbar(true);
                
                 if (completed) {
                     handleProcessingComplete();
@@ -62,229 +149,472 @@ const FileUpload = () => {
             console.error('Status check error:', error);
             setTimeout(checkProcessingStatus, 1000);
         }
-    };
- 
-    const handleProcessingComplete = () => {
-        setIsProcessingComplete(true);
-        setUploading(false);
-        setStatus('Processing completed!');
-        setShowGenerateDialog(true);
-        const audio = new Audio('/notification.mp3');
-        audio.play().catch(e => console.log('Audio play failed:', e));
-    };
- 
-    const handleFileSelect = (event) => {
-        const file = event.target.files[0];
-        if (file && file.type.startsWith('video/')) {
-            setSelectedFile(file);
+    }, [handleProcessingComplete]);
+
+    useEffect(() => {
+        // Only check processing status if we're actively processing
+        if (isProcessing) {
+            const intervalId = setInterval(() => {
+                checkProcessingStatus();
+            }, 3000);
+            
+            // Clean up the interval when component unmounts or processing stops
+            return () => clearInterval(intervalId);
+        }
+    }, [checkProcessingStatus, isProcessing]);
+
+    const handleFileChange = (e) => {
+        const selectedFile = e.target.files[0];
+        if (selectedFile && selectedFile.type.startsWith('video/')) {
+            setFile(selectedFile);
             setError('');
-            setVideoReady(false);
+            setSnackbarMessage(`File selected: ${selectedFile.name}`);
+            setShowSnackbar(true);
+            setUploadComplete(false);
         } else {
             setError('Please select a valid video file');
-            setSelectedFile(null);
+            setFile(null);
         }
     };
- 
+
     const handleUpload = async () => {
-        if (!selectedFile) return;
- 
+        if (!file) return;
+
         setUploading(true);
         setError('');
-        setStatus('Starting upload...');
-        setVideoReady(false);
+        setSuccess(false);
+        setUploadComplete(false);
+        setSnackbarMessage('Starting upload...');
+        setShowSnackbar(true);
         setUploadProgress(0);
         setProcessingProgress(0);
-        setIsProcessingComplete(false);
- 
+
+        // If backend is not available and not forcing real backend, simulate upload
+        if (!backendAvailable) {
+            console.log('Backend not available, simulating upload...');
+            
+            // Simulate upload progress
+            let progress = 0;
+            const interval = setInterval(() => {
+                progress += 10;
+                setUploadProgress(progress);
+                
+                if (progress >= 100) {
+                    clearInterval(interval);
+                    setSuccess(true);
+                    setUploadComplete(true);
+                    setSnackbarMessage('Upload complete! (SIMULATED) Click "Start Analysis" to begin processing.');
+                    setShowSnackbar(true);
+                    setUploading(false);
+                }
+            }, 500);
+            
+            return;
+        }
+
         try {
+            // Clear any existing processing queue
             await axios.post(`${BACKEND_URL}/purge-queue`);
+            console.log('Queue purged successfully');
            
+            // Create form data with single file field - the backend expects 'video'
             const formData = new FormData();
-            formData.append('video', selectedFile);
+            formData.append('video', file);
+            
+            console.log('Uploading file to:', `${BACKEND_URL}/upload`);
+            console.log('File details:', {
+                name: file.name,
+                type: file.type,
+                size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`
+            });
            
-            await axios.post(`${BACKEND_URL}/upload`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
+            // Simpler upload with standard headers
+            const response = await axios.post(`${BACKEND_URL}/upload`, formData, {
                 onUploadProgress: (progressEvent) => {
-                    const progress = (progressEvent.loaded / progressEvent.total * 100);
+                    const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
                     setUploadProgress(progress);
+                    console.log(`Upload progress: ${progress}%`);
                 },
             });
- 
-            setStatus('Upload complete. Starting processing...');
-           
-            await axios.post(`${BACKEND_URL}/start-producer`);
-            await axios.post(`${BACKEND_URL}/start-consumer`);
-           
-            checkProcessingStatus();
- 
-        } catch (error) {
-            console.error('Upload/Processing error:', error);
-            setError(error.response?.data?.error || 'Upload failed. Please try again.');
+            
+            console.log('Upload response:', response.data);
+
+            setSuccess(true);
+            setUploadComplete(true);
+            setSnackbarMessage('Upload complete! Click "Start Analysis" to begin processing.');
+            setShowSnackbar(true);
+        } catch (uploadError) {
+            console.error('Upload error:', uploadError);
+            if (uploadError.response) {
+                // The request was made and the server responded with a status code
+                // that falls out of the range of 2xx
+                console.error('Error response:', {
+                    data: uploadError.response.data,
+                    status: uploadError.response.status,
+                    headers: uploadError.response.headers
+                });
+                setError(`Upload failed (${uploadError.response.status}): ${uploadError.response.data.message || uploadError.response.data || 'Please try again.'}`);
+            } else if (uploadError.request) {
+                // The request was made but no response was received
+                console.error('No response received:', uploadError.request);
+                setError('No response from server. Please check if the backend is running.');
+            } else {
+                // Something happened in setting up the request that triggered an Error
+                console.error('Request setup error:', uploadError.message);
+                setError(`Upload failed: ${uploadError.message}`);
+            }
+            setSnackbarMessage('Upload failed. Please check console for details.');
+            setShowSnackbar(true);
+        } finally {
             setUploading(false);
         }
     };
- 
+
+    const handleStartProcessing = async () => {
+        try {
+            setIsProcessing(true);
+            setSnackbarMessage('Starting video analysis...');
+            setShowSnackbar(true);
+            
+            // If backend is not available and not forcing real backend, simulate processing
+            if (!backendAvailable) {
+                console.log('Backend not available, simulating processing...');
+                
+                // Simulate processing progress
+                let progress = 0;
+                const interval = setInterval(() => {
+                    progress += 5;
+                    setProcessingProgress(progress);
+                    
+                    if (progress >= 100) {
+                        clearInterval(interval);
+                        setIsProcessing(false);
+                        setShowGenerateDialog(true);
+                        setSnackbarMessage('Processing completed! (SIMULATED)');
+                        setShowSnackbar(true);
+                    }
+                }, 800);
+                
+                // Clear file reference to prevent duplicate processing
+                setFile(null);
+                setUploadComplete(false);
+                return;
+            }
+            
+            // Basic approach: start the producer and consumer with minimal parameters
+            console.log('Starting producer...');
+            await axios.post(`${BACKEND_URL}/start-producer`);
+            
+            console.log('Starting consumer...');
+            await axios.post(`${BACKEND_URL}/start-consumer`);
+            
+            // Start checking processing status
+            console.log('Checking processing status...');
+            checkProcessingStatus();
+            
+            // Clear file reference to prevent duplicate processing
+            setFile(null);
+            setUploadComplete(false);
+        } catch (processingError) {
+            console.error('Processing error:', processingError);
+            setError(`Error starting video processing: ${processingError.message}`);
+            setSnackbarMessage('Error starting video processing. Please check console for details.');
+            setShowSnackbar(true);
+            setIsProcessing(false);
+        }
+    };
+
     const handleGenerateVideo = async () => {
         try {
-            setStatus('Generating final video...');
+            setSnackbarMessage('Generating final video...');
+            setShowSnackbar(true);
+            
+            // If backend is not available, simulate video generation
+            if (!backendAvailable) {
+                console.log('Backend not available, simulating video generation...');
+                setTimeout(() => {
+                    setSnackbarMessage('Video processing complete! (SIMULATED)');
+                    setShowSnackbar(true);
+                    setShowGenerateDialog(false);
+                }, 2000);
+                return;
+            }
+            
             await axios.post(`${BACKEND_URL}/generate-video`);
             window.location.href = `${BACKEND_URL}/download-video`;
-            setStatus('Video processing complete!');
+            setSnackbarMessage('Video processing complete!');
+            setShowSnackbar(true);
             setShowGenerateDialog(false);
         } catch (error) {
             setError('Error generating video');
+            setSnackbarMessage('Error generating video');
+            setShowSnackbar(true);
             console.error('Video generation error:', error);
         }
     };
- 
-    const handleCancelProcessing = async () => {
-        try {
-            await axios.post(`${BACKEND_URL}/cancel-processing`);
-            setUploading(false);
-            setStatus('Processing cancelled');
-        } catch (error) {
-            console.error('Cancel processing error:', error);
-            setError('Failed to cancel processing');
-        }
+
+    const handleCancelUpload = () => {
+        setUploading(false);
+        setSnackbarMessage('Upload cancelled');
+        setShowSnackbar(true);
     };
- 
+
+    const handleCloseSnackbar = () => {
+        setShowSnackbar(false);
+    };
+
     return (
-        <div className="max-w-3xl mx-auto p-4">
-            <Card elevation={3} className="mb-6 bg-white rounded-lg shadow-lg overflow-hidden">
-                <CardContent className="p-6">
-                    <Typography variant="h5" className="text-center font-bold text-gray-800 mb-6">
-                        Football Player Analysis
-                    </Typography>
- 
-                    <div className="text-center mb-6">
-                        <input
-                            type="file"
-                            accept="video/*"
-                            onChange={handleFileSelect}
-                            className="hidden"
-                            id="video-upload-input"
-                        />
-                        <label htmlFor="video-upload-input">
-                            <Button
-                                variant="contained"
-                                component="span"
-                                startIcon={<CloudUploadIcon />}
-                                disabled={uploading}
-                                className="mb-4 bg-primary-600 hover:bg-primary-700 transition-all duration-300"
-                                sx={{ mb: 2 }}
-                            >
-                                Select Video
-                            </Button>
-                        </label>
- 
-                        {selectedFile && (
-                            <Typography variant="body2" className="text-gray-600 italic">
-                                Selected file: {selectedFile.name}
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-8"
+        >
+            <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.2 }}
+                className="text-center space-y-4"
+            >
+                <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    className="inline-block p-4 rounded-full bg-blue-600/20 dark:bg-blue-900/20"
+                >
+                    <VideoLibraryIcon className="text-6xl text-blue-600 dark:text-blue-400" />
+                </motion.div>
+                <Typography variant="h4" component="h2" className="font-bold">
+                    Upload Your Match Video
+                </Typography>
+                <Typography variant="body1" className="text-gray-600 dark:text-gray-300 max-w-2xl mx-auto">
+                    Select a video file to analyze player movements and team performance
+                </Typography>
+            </motion.div>
+
+            <motion.div
+                initial={{ y: 20, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                transition={{ delay: 0.4 }}
+                className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-8 space-y-6"
+            >
+                {!backendAvailableStatus && (
+                    <Box className="mb-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-lg">
+                        <div className="flex flex-col items-center">
+                            <Typography variant="body2" className="text-yellow-800 dark:text-yellow-200 mb-2">
+                                Backend connection issue detected. Choose mode:
                             </Typography>
-                        )}
-                    </div>
- 
-                    {selectedFile && !uploading && (
-                        <div className="text-center">
-                            <Button
-                                variant="contained"
-                                color="primary"
-                                onClick={handleUpload}
-                                disabled={uploading}
-                                className="bg-primary-600 hover:bg-primary-700 transition-all duration-300 px-6 py-2"
-                            >
-                                Upload and Process
-                            </Button>
-                        </div>
-                    )}
- 
-                    {uploading && (
-                        <div className="mt-6 space-y-4">
-                            <div>
-                                <Typography variant="body2" className="font-medium text-gray-700 mb-1">
-                                    Upload Progress:
-                                </Typography>
-                                <LinearProgress
-                                    variant="determinate"
-                                    value={uploadProgress}
-                                    className="h-2 rounded-full"
-                                    sx={{ mb: 2, height: 8, borderRadius: 2 }}
-                                />
-                            </div>
- 
-                            <div>
-                                <Typography variant="body2" className="font-medium text-gray-700 mb-1">
-                                    Processing Progress:
-                                </Typography>
-                                <LinearProgress
-                                    variant="determinate"
-                                    value={processingProgress}
-                                    className="h-2 rounded-full"
-                                    sx={{ mb: 2, height: 8, borderRadius: 2 }}
-                                />
-                            </div>
- 
-                            <div className="flex justify-center items-center gap-4 mt-4">
-                                <div className="text-center text-gray-700 font-medium">
-                                    {status}
-                                </div>
-                                <Button
-                                    variant="contained"
-                                    color="error"
-                                    startIcon={<CancelIcon />}
-                                    onClick={handleCancelProcessing}
-                                    className="bg-red-600 hover:bg-red-700"
+                            <div className="flex space-x-4">
+                                <Button 
+                                    variant={forceRealBackend ? "contained" : "outlined"}
+                                    color="primary"
+                                    size="small"
+                                    onClick={() => setForceRealBackend(true)}
                                 >
-                                    Cancel
+                                    Use Real Backend
+                                </Button>
+                                <Button 
+                                    variant={!forceRealBackend ? "contained" : "outlined"}
+                                    color="secondary"
+                                    size="small"
+                                    onClick={() => setForceRealBackend(false)}
+                                >
+                                    Simulation Mode
                                 </Button>
                             </div>
                         </div>
+                    </Box>
+                )}
+                
+                {backendAvailable && (
+                    <Box className="mb-4 p-3 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                        <Typography variant="body2" align="center" className="text-green-800 dark:text-green-200">
+                            {backendAvailableStatus 
+                                ? `Connected to backend server at: ${BACKEND_URL}` 
+                                : `Using real backend at: ${BACKEND_URL} (forced)`}
+                        </Typography>
+                    </Box>
+                )}
+                
+                {checkingBackend && (
+                    <Box className="mb-4 p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex justify-center">
+                        <LinearProgress 
+                            className="w-full max-w-md rounded-full" 
+                            color="primary" 
+                        />
+                    </Box>
+                )}
+                
+                <Box className="flex flex-col items-center space-y-6">
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        className="p-4 rounded-full bg-blue-600/10 dark:bg-blue-900/20"
+                    >
+                        <CloudUploadIcon className="text-4xl text-blue-600 dark:text-blue-400" />
+                    </motion.div>
+
+                    {file ? (
+                        <Box className="w-full max-w-md">
+                            <Box className="flex justify-between items-center">
+                                <Typography variant="body2" className="truncate max-w-[250px]">
+                                    {file.name}
+                                </Typography>
+                                <Typography variant="body2" color="textSecondary">
+                                    {(file.size / (1024 * 1024)).toFixed(2)} MB
+                                </Typography>
+                            </Box>
+                        </Box>
+                    ) : (
+                        <StyledButton
+                            component="label"
+                            variant="outlined"
+                            startIcon={<CloudUploadIcon />}
+                            className="w-full max-w-md"
+                        >
+                            Choose video file
+                            <VisuallyHiddenInput 
+                                type="file" 
+                                accept="video/*"
+                                onChange={handleFileChange}
+                            />
+                        </StyledButton>
                     )}
- 
+
                     {error && (
-                        <Typography className="text-center text-red-600 mt-4 font-medium">
-                            {error}
+                        <Box className="flex items-center space-x-2 text-red-500">
+                            <ErrorIcon />
+                            <Typography>{error}</Typography>
+                        </Box>
+                    )}
+
+                    {uploading && (
+                        <Box className="w-full max-w-md space-y-2">
+                            <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
+                                Upload Progress
+                            </Typography>
+                            <LinearProgress 
+                                variant="determinate" 
+                                value={uploadProgress} 
+                                className="rounded-full"
+                            />
+                            <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
+                                {uploadProgress}% uploaded
+                            </Typography>
+                            <StyledButton
+                                variant="outlined"
+                                color="error"
+                                onClick={handleCancelUpload}
+                                startIcon={<CancelIcon />}
+                                fullWidth
+                            >
+                                Cancel
+                            </StyledButton>
+                        </Box>
+                    )}
+
+                    {isProcessing && (
+                        <Box className="w-full max-w-md space-y-2">
+                            <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
+                                Processing Progress
+                            </Typography>
+                            <LinearProgress 
+                                variant="determinate" 
+                                value={processingProgress} 
+                                className="rounded-full"
+                                color="secondary"
+                            />
+                            <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
+                                {processingProgress.toFixed(0)}% processed
+                            </Typography>
+                        </Box>
+                    )}
+
+                    {!uploading && !isProcessing && !file && !uploadComplete && (
+                        <Typography variant="body2" align="center" className="text-gray-500 dark:text-gray-400 italic">
+                            Select a video file to start analysis
                         </Typography>
                     )}
-                </CardContent>
-            </Card>
- 
-            {/* Completion Dialog */}
-            <Dialog
-                open={showGenerateDialog}
+
+                    {/* Buttons Container */}
+                    <Box className="w-full max-w-md space-y-3">
+                        {!uploading && !isProcessing && file && (
+                            <StyledButton
+                                variant="contained"
+                                color="primary"
+                                onClick={handleUpload}
+                                startIcon={<CloudUploadIcon />}
+                                fullWidth
+                            >
+                                Upload Video
+                            </StyledButton>
+                        )}
+
+                        {uploadComplete && !isProcessing && (
+                            <StyledButton
+                                variant="contained"
+                                color="secondary"
+                                onClick={handleStartProcessing}
+                                startIcon={<PlayArrowIcon />}
+                                fullWidth
+                                className="mt-4"
+                            >
+                                Start Analysis
+                            </StyledButton>
+                        )}
+                    </Box>
+
+                    {success && !uploadComplete && (
+                        <Box className="flex items-center space-x-2 text-green-500">
+                            <CheckCircleIcon />
+                            <Typography>Upload successful!</Typography>
+                        </Box>
+                    )}
+                </Box>
+            </motion.div>
+
+            <Dialog 
+                open={showGenerateDialog} 
                 onClose={() => setShowGenerateDialog(false)}
                 PaperProps={{
-                    className: "rounded-lg"
+                    className: "rounded-xl overflow-hidden"
                 }}
             >
-                <DialogTitle className="flex items-center gap-2 bg-green-50 text-green-800 py-4">
-                    <CheckCircleIcon className="text-green-600" />
+                <DialogTitle className="bg-blue-500 text-white">
                     Processing Complete
                 </DialogTitle>
-                <DialogContent className="py-6">
-                    <Typography className="text-gray-700">
-                        Video processing has been completed successfully. Would you like to generate and download the processed video?
+                <DialogContent className="py-4">
+                    <Typography>
+                        Your video has been processed successfully. Would you like to generate the analysis video?
                     </Typography>
                 </DialogContent>
-                <DialogActions className="p-4">
+                <DialogActions>
+                    <Button onClick={() => setShowGenerateDialog(false)}>Cancel</Button>
                     <Button 
-                        onClick={() => setShowGenerateDialog(false)}
-                        className="text-gray-700 hover:bg-gray-100"
+                        onClick={handleGenerateVideo} 
+                        variant="contained" 
+                        color="primary"
+                        startIcon={<CloudUploadIcon />}
                     >
-                        Cancel
-                    </Button>
-                    <Button
-                        variant="contained"
-                        startIcon={<DownloadIcon />}
-                        onClick={handleGenerateVideo}
-                        className="bg-primary-600 hover:bg-primary-700"
-                    >
-                        Generate & Download
+                        Generate Video
                     </Button>
                 </DialogActions>
             </Dialog>
-        </div>
+
+            <Snackbar
+                open={showSnackbar}
+                autoHideDuration={6000}
+                onClose={handleCloseSnackbar}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            >
+                <Alert 
+                    onClose={handleCloseSnackbar} 
+                    severity={error ? "error" : success ? "success" : "info"}
+                    sx={{ width: '100%' }}
+                    variant="filled"
+                >
+                    {snackbarMessage}
+                </Alert>
+            </Snackbar>
+        </motion.div>
     );
 };
- 
+
 export default FileUpload;
