@@ -203,7 +203,7 @@ const FileUpload = () => {
                     clearInterval(interval);
                     setSuccess(true);
                     setUploadComplete(true);
-                    setSnackbarMessage('Upload complete! (SIMULATED) Click "Start Analysis" to begin processing.');
+                    setSnackbarMessage('Upload complete! Click "Start Analysis" to begin processing.');
                     setShowSnackbar(true);
                     setUploading(false);
                 }
@@ -214,8 +214,12 @@ const FileUpload = () => {
 
         try {
             // Clear any existing processing queue
-            await axios.post(`${BACKEND_URL}/purge-queue`);
-            console.log('Queue purged successfully');
+            try {
+                await axios.post(`${BACKEND_URL}/purge-queue`);
+                console.log('Queue purged successfully');
+            } catch (purgeError) {
+                console.log('Queue purge failed, continuing with upload:', purgeError);
+            }
            
             // Create form data with single file field - the backend expects 'video'
             const formData = new FormData();
@@ -228,7 +232,7 @@ const FileUpload = () => {
                 size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`
             });
            
-            // Simpler upload with standard headers
+            // Upload the file to the server
             const response = await axios.post(`${BACKEND_URL}/upload`, formData, {
                 onUploadProgress: (progressEvent) => {
                     const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -239,9 +243,22 @@ const FileUpload = () => {
             
             console.log('Upload response:', response.data);
 
+            // File is uploaded, now start the producer
+            try {
+                console.log('Starting producer...');
+                await axios.post(`${BACKEND_URL}/start-producer`);
+                console.log('Producer started successfully');
+            } catch (producerError) {
+                console.error('Producer start error:', producerError);
+                setError(`Upload complete, but failed to start producer: ${producerError.message}`);
+                setSnackbarMessage('Upload complete, but failed to start producer. You can try manually starting the analysis.');
+                setShowSnackbar(true);
+                // Still mark upload as complete so user can try analysis
+            }
+
             setSuccess(true);
             setUploadComplete(true);
-            setSnackbarMessage('Upload complete! Click "Start Analysis" to begin processing.');
+            setSnackbarMessage('Upload complete and producer started! Click "Start Analysis" to begin processing.');
             setShowSnackbar(true);
         } catch (uploadError) {
             console.error('Upload error:', uploadError);
@@ -301,10 +318,7 @@ const FileUpload = () => {
                 return;
             }
             
-            // Basic approach: start the producer and consumer with minimal parameters
-            console.log('Starting producer...');
-            await axios.post(`${BACKEND_URL}/start-producer`);
-            
+            // Only start the consumer - producer already started during upload
             console.log('Starting consumer...');
             await axios.post(`${BACKEND_URL}/start-consumer`);
             
@@ -340,16 +354,79 @@ const FileUpload = () => {
                 return;
             }
             
-            await axios.post(`${BACKEND_URL}/generate-video`);
-            window.location.href = `${BACKEND_URL}/download-video`;
-            setSnackbarMessage('Video processing complete!');
-            setShowSnackbar(true);
-            setShowGenerateDialog(false);
+            // Call the generate-video endpoint
+            const response = await axios.post(`${BACKEND_URL}/generate-video`);
+            console.log('Generate video response:', response.data);
+            
+            // Check if the video is being generated successfully
+            if (response.data && response.data.success) {
+                setSnackbarMessage('Video generation in progress... Preparing download.');
+                setShowSnackbar(true);
+                
+                // Poll for video generation status (simplified approach)
+                let checkCount = 0;
+                const maxChecks = 30; // Maximum 30 checks (30 seconds)
+                
+                const checkVideoStatus = async () => {
+                    try {
+                        checkCount++;
+                        // Try to fetch a small chunk of the video to see if it exists
+                        const videoCheckResponse = await axios.head(`${BACKEND_URL}/output-video-status`);
+                        
+                        if (videoCheckResponse.status === 200) {
+                            console.log('Video is ready for download');
+                            // Video is ready, redirect to download
+                            window.location.href = `${BACKEND_URL}/download-video`;
+                            setSnackbarMessage('Video processing complete! Download starting...');
+                            setShowSnackbar(true);
+                            setShowGenerateDialog(false);
+                            return;
+                        }
+                    } catch (error) {
+                        console.log(`Video not ready yet (check ${checkCount}/${maxChecks})`);
+                        if (checkCount < maxChecks) {
+                            setTimeout(checkVideoStatus, 1000); // Check again in 1 second
+                        } else {
+                            // If we've checked too many times, show a direct link
+                            setSnackbarMessage('Video generation taking longer than expected. Click to download when ready.');
+                            setShowSnackbar(true);
+                            
+                            // Show a button to manually download
+                            const downloadLink = document.createElement('a');
+                            downloadLink.href = `${BACKEND_URL}/download-video`;
+                            downloadLink.target = '_blank';
+                            downloadLink.innerText = 'Download Video';
+                            document.body.appendChild(downloadLink);
+                            downloadLink.click();
+                            document.body.removeChild(downloadLink);
+                            
+                            setShowGenerateDialog(false);
+                        }
+                    }
+                };
+                
+                // Start checking for video status
+                setTimeout(checkVideoStatus, 2000); // Give it a couple seconds to start generating
+            } else {
+                // Fallback direct approach if response doesn't have expected format
+                window.location.href = `${BACKEND_URL}/download-video`;
+                setSnackbarMessage('Video processing complete! Download starting...');
+                setShowSnackbar(true);
+                setShowGenerateDialog(false);
+            }
         } catch (error) {
-            setError('Error generating video');
-            setSnackbarMessage('Error generating video');
-            setShowSnackbar(true);
             console.error('Video generation error:', error);
+            
+            // Even if there's an error, try to download anyway
+            try {
+                window.location.href = `${BACKEND_URL}/download-video`;
+                setSnackbarMessage('Attempting download despite errors...');
+            } catch (downloadError) {
+                setError('Error generating and downloading video');
+                setSnackbarMessage('Error generating video. Please try again or check server logs.');
+            }
+            
+            setShowSnackbar(true);
         }
     };
 

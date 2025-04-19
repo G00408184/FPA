@@ -234,7 +234,9 @@ app.post('/purge-queue', (req, res) => {
 // Generate video endpoint
 app.post('/generate-video', (req, res) => {
     try {
-        console.log('Starting generate_video.py...');
+        console.log('Generating video from processed frames...');
+        
+        // Spawn the Python script to generate the video
         const generateProcess = spawn('python', ['generate_video.py']);
         
         generateProcess.stdout.on('data', (data) => {
@@ -247,11 +249,13 @@ app.post('/generate-video', (req, res) => {
         
         generateProcess.on('close', (code) => {
             console.log(`Generate video process exited with code ${code}`);
-            if (code === 0) {
-                res.json({ message: 'Video generated successfully' });
-            } else {
-                res.status(500).json({ error: 'Video generation failed' });
-            }
+        });
+        
+        // Send a success response, don't wait for completion
+        res.json({ 
+            success: true,
+            message: 'Video generation started successfully',
+            status: 'processing'
         });
     } catch (error) {
         console.error('Error generating video:', error);
@@ -259,13 +263,52 @@ app.post('/generate-video', (req, res) => {
     }
 });
 
-// Download video endpoint
+// Output video status endpoint
+app.head('/output-video-status', (req, res) => {
+    try {
+        const videoPath = path.join(__dirname, 'output_video.mp4');
+        
+        if (fs.existsSync(videoPath)) {
+            // Check if the file is fully written (not empty or still being written)
+            const stats = fs.statSync(videoPath);
+            
+            if (stats.size > 0) {
+                // Video file exists and has content
+                res.status(200).end();
+            } else {
+                // Video file exists but might be empty or still being written
+                res.status(202).end(); // Accepted but not ready
+            }
+        } else {
+            // Video doesn't exist yet
+            res.status(404).end();
+        }
+    } catch (error) {
+        console.error('Error checking video status:', error);
+        res.status(500).end();
+    }
+});
+
+// Download endpoint for the processed video
 app.get('/download-video', (req, res) => {
-    const videoPath = path.join(__dirname, 'output_video.mp4');
-    if (fs.existsSync(videoPath)) {
-        res.download(videoPath);
-    } else {
-        res.status(404).json({ error: 'Video file not found' });
+    try {
+        const videoPath = path.join(__dirname, 'output_video.mp4');
+        
+        if (fs.existsSync(videoPath)) {
+            // Stream the video for download
+            res.download(videoPath, 'analyzed_football_video.mp4', (err) => {
+                if (err) {
+                    console.error('Download error:', err);
+                } else {
+                    console.log('Video downloaded successfully');
+                }
+            });
+        } else {
+            res.status(404).json({ error: 'Video not found. Make sure to generate it first.' });
+        }
+    } catch (error) {
+        console.error('Error downloading video:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
