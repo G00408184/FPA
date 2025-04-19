@@ -11,7 +11,7 @@ import traceback
 import time
 
 # Set up the Roboflow client
-rf = Roboflow(api_key="VpUIVQYxyMgXli0e0uC1")
+rf = Roboflow(api_key="5sviEDrSM3IWkum0z8Vy")
 project = rf.workspace("roboflow-jvuqo").project("football-players-detection-3zvbc")
 model = project.version(12).model
 
@@ -33,6 +33,8 @@ class TeamAssigner:
         }
         # Color distance threshold for team reassignment
         self.color_distance_threshold = 150.0
+        # Track goalkeepers specifically
+        self.goalkeeper_ids = {}
 
     def color_distance(self, color1, color2):
         """Calculate Euclidean distance between two colors"""
@@ -83,6 +85,26 @@ class TeamAssigner:
         # Return the color center of the player cluster
         return kmeans.cluster_centers_[player_cluster]
 
+    def is_goalkeeper(self, bbox, frame_size):
+        """Check if player is likely a goalkeeper based on position"""
+        x, y, w, h = bbox
+        frame_width = frame_size[1]  # Width of the frame
+
+        # Goalkeepers are typically at the far left or right of the field
+        if x < 0.2 * frame_width or x > 0.8 * frame_width:
+            return True
+        return False
+
+    def is_dark_goalkeeper(self, color):
+        """Check if color is likely a dark/black goalkeeper"""
+        # Dark colors have low RGB sum
+        return np.sum(color) < 200
+
+    def is_light_goalkeeper(self, color):
+        """Check if color is likely a light/white goalkeeper"""
+        # Light colors have high RGB sum
+        return np.sum(color) > 600
+
     def assign_teams(self, frame, player_detections):
         """Initialize team colors by clustering player colors"""
         if self.teams_initialized or len(player_detections) < 4:
@@ -91,18 +113,37 @@ class TeamAssigner:
         # Extract colors from all detected players
         player_colors = []
         player_ids = []
+        player_bboxes = []
+        frame_size = frame.shape
 
         for player_id, detection in player_detections.items():
             x, y, w, h = detection["bbox"]
+            bbox = (x, y, w, h)
 
             # Skip referees detected by model
             if detection.get("class") == "referee":
                 self.player_team_dict[player_id] = "referee"
                 continue
 
-            player_color = self.get_player_color(frame, (x, y, w, h))
+            player_color = self.get_player_color(frame, bbox)
             player_colors.append(player_color)
             player_ids.append(player_id)
+            player_bboxes.append(bbox)
+
+            # Check if this player might be a goalkeeper
+            if self.is_goalkeeper(bbox, frame_size):
+                if self.is_dark_goalkeeper(player_color):
+                    # Dark goalkeeper should be team 1
+                    self.goalkeeper_ids[player_id] = 1
+                    print(
+                        f"Detected dark goalkeeper (ID: {player_id}), assigning to Team 1"
+                    )
+                elif self.is_light_goalkeeper(player_color):
+                    # Light goalkeeper should be team 2
+                    self.goalkeeper_ids[player_id] = 2
+                    print(
+                        f"Detected light goalkeeper (ID: {player_id}), assigning to Team 2"
+                    )
 
         # If we don't have enough players after removing referees, return
         if len(player_colors) < 4:
@@ -128,10 +169,17 @@ class TeamAssigner:
             self.team_colors[1] = centers[1]  # Lighter team
             self.team_colors[2] = centers[0]  # Darker team
 
-        # Assign players to teams based on their colors
+        # Assign players to teams based on their colors and special cases (goalkeepers)
         team_labels = team_kmeans.labels_
         for i, player_id in enumerate(player_ids):
-            team_id = 1 if team_labels[i] == (0 if dist_1_0 < dist_1_1 else 1) else 2
+            if player_id in self.goalkeeper_ids:
+                # Use pre-assigned team for goalkeepers
+                team_id = self.goalkeeper_ids[player_id]
+            else:
+                team_id = (
+                    1 if team_labels[i] == (0 if dist_1_0 < dist_1_1 else 1) else 2
+                )
+
             self.player_team_dict[player_id] = team_id
 
         print(f"Team 1 (Light) color: {self.team_colors[1]}")
@@ -140,6 +188,10 @@ class TeamAssigner:
 
     def get_player_team(self, frame, bbox, player_id):
         """Determine which team a player belongs to"""
+        # First check if this is a known goalkeeper
+        if player_id in self.goalkeeper_ids:
+            return self.goalkeeper_ids[player_id]
+
         if player_id in self.player_team_dict:
             # Get the current color and compare with stored team colors
             current_color = self.get_player_color(frame, bbox)
@@ -168,6 +220,16 @@ class TeamAssigner:
 
         # For new players, calculate distances to team colors
         player_color = self.get_player_color(frame, bbox)
+
+        # Check if this might be a goalkeeper we missed earlier
+        if self.is_goalkeeper(bbox, frame.shape):
+            if self.is_dark_goalkeeper(player_color):
+                self.goalkeeper_ids[player_id] = 1
+                return 1
+            elif self.is_light_goalkeeper(player_color):
+                self.goalkeeper_ids[player_id] = 2
+                return 2
+
         dist_team1 = self.color_distance(player_color, self.team_colors[1])
         dist_team2 = self.color_distance(player_color, self.team_colors[2])
 
@@ -180,6 +242,229 @@ class TeamAssigner:
 
 # Initialize team assigner
 team_assigner = TeamAssigner()
+
+
+# Ball possession tracker
+class BallPossessionTracker:
+    def __init__(self):
+        # Start with balanced possession (no team favored)
+        self.last_possession = None  # Start with no team having possession
+        self.possession_count = {1: 0, 2: 0}  # Start with zero counts
+        self.possession_durations = {1: 0, 2: 0}  # Start with zero durations
+        self.last_frame_time = None
+        self.possession_smoothing = 10  # Reduced from 15 to be more responsive
+        self.recent_possessions = []  # Start with empty list
+        # Store previous percentage values for smooth transitions
+        self.prev_percentages = {1: 50.0, 2: 50.0}
+        # Smoothing factor for visual transitions (0-1, where 1 = no smoothing)
+        self.transition_smoothing = 0.2  # Increased to make transitions faster
+        # Distance threshold for possession
+        self.possession_distance_threshold = (
+            60  # Adjusted threshold for closer detection
+        )
+        # Count frames where no team has possession
+        self.no_possession_frames = 0
+
+    def update_possession(self, players, ball_position, frame_number):
+        """Update ball possession based on proximity to players"""
+        min_distance = float("inf")
+        closest_player_id = None
+        closest_player_team = None
+
+        # Find the closest player to the ball
+        for player_id, player_data in players.items():
+            # Skip referees
+            if player_data.get("team") in ["referee", "unassigned"]:
+                continue
+
+            player_position = (player_data["x"], player_data["y"])
+            distance = np.sqrt(
+                (player_position[0] - ball_position[0]) ** 2
+                + (player_position[1] - ball_position[1]) ** 2
+            )
+
+            # Check if this player is closer than the current closest
+            if distance < min_distance:
+                min_distance = distance
+                closest_player_id = player_id
+                closest_player_team = player_data.get("team")
+
+        # Minimum distance threshold to consider a player has possession
+        if (
+            min_distance < self.possession_distance_threshold
+            and closest_player_team in [1, 2]
+        ):
+            # Reset no possession counter
+            self.no_possession_frames = 0
+
+            # Add to recent possessions
+            self.recent_possessions.append(closest_player_team)
+            if len(self.recent_possessions) > self.possession_smoothing:
+                self.recent_possessions.pop(0)
+
+            # Determine the most common team in recent possessions
+            if len(self.recent_possessions) > 0:
+                counts = {}
+                for team in self.recent_possessions:
+                    counts[team] = counts.get(team, 0) + 1
+
+                current_possession = max(counts.items(), key=lambda x: x[1])[0]
+
+                # If possession changes, update counters
+                if self.last_possession != current_possession:
+                    self.last_possession = current_possession
+                    self.possession_count[current_possession] += 1
+
+                # Update duration
+                self.possession_durations[current_possession] += 1
+
+                return current_possession, closest_player_id
+        else:
+            # Ball is far from any player - count as "no possession"
+            self.no_possession_frames += 1
+
+            # Only continue last team's possession for a short while (3 frames)
+            if self.no_possession_frames <= 3 and self.last_possession:
+                # Continue last team's possession briefly
+                if self.last_possession in [1, 2]:
+                    self.recent_possessions.append(self.last_possession)
+                    if len(self.recent_possessions) > self.possession_smoothing:
+                        self.recent_possessions.pop(0)
+                    self.possession_durations[self.last_possession] += 1
+            else:
+                # Ball has been away from players too long
+                # Don't increment any team's possession counter
+                pass
+
+        # Return the last possession (or None if never established)
+        return self.last_possession, None
+
+    def get_possession_stats(self, smoothed=False):
+        """Get possession statistics as percentages with optional smoothing
+
+        Args:
+            smoothed: If True, returns smoothed stats for visual display.
+                     If False, returns raw stats for data storage.
+        """
+        total_duration = sum(self.possession_durations.values())
+        if total_duration == 0:
+            raw_stats = {1: 50.0, 2: 50.0}  # Default to equal possession
+        else:
+            raw_stats = {
+                1: (self.possession_durations[1] / total_duration) * 100,
+                2: (self.possession_durations[2] / total_duration) * 100,
+            }
+
+        if not smoothed:
+            return raw_stats  # Return raw stats for data storage
+
+        # Apply smoothing between current and previous values for visual display
+        smoothed_stats = {}
+        for team in [1, 2]:
+            smoothed_stats[team] = (
+                self.prev_percentages[team] * (1 - self.transition_smoothing)
+                + raw_stats[team] * self.transition_smoothing
+            )
+
+        # Update previous percentages for next frame
+        self.prev_percentages = smoothed_stats.copy()
+
+        return smoothed_stats  # Return smoothed stats for visual display
+
+    def draw_possession_bar(self, frame):
+        """Draw a possession bar at the top of the frame that's always visible"""
+        # Get smoothed stats for visual display
+        stats = self.get_possession_stats(smoothed=True)
+
+        # Create transparent overlay
+        overlay = frame.copy()
+        cv2.rectangle(
+            overlay, (50, 40), (frame.shape[1] - 50, 100), (255, 255, 255), -1
+        )
+        alpha = 0.7
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+        # Draw title and team labels
+        cv2.putText(
+            frame,
+            "BALL POSSESSION",
+            (frame.shape[1] // 2 - 100, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 0),
+            2,
+        )
+
+        # Team labels
+        cv2.putText(
+            frame, "Team 1", (80, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2
+        )
+        cv2.putText(
+            frame,
+            "Team 2",
+            (frame.shape[1] - 150, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (0, 165, 255),
+            2,
+        )
+
+        # Draw possession bar
+        bar_width = frame.shape[1] - 200
+        bar_height = 20
+        bar_x = 100
+        bar_y = 70
+
+        # Team 1 portion (blue)
+        team1_width = int(bar_width * (stats[1] / 100))
+        cv2.rectangle(
+            frame,
+            (bar_x, bar_y),
+            (bar_x + team1_width, bar_y + bar_height),
+            (200, 0, 0),
+            -1,
+        )
+
+        # Team 2 portion (orange)
+        cv2.rectangle(
+            frame,
+            (bar_x + team1_width, bar_y),
+            (bar_x + bar_width, bar_y + bar_height),
+            (0, 165, 255),
+            -1,
+        )
+
+        # Add percentages
+        cv2.putText(
+            frame,
+            f"{stats[1]:.1f}%",
+            (bar_x + team1_width // 2 - 20, bar_y + 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+        )
+
+        cv2.putText(
+            frame,
+            f"{stats[2]:.1f}%",
+            (bar_x + team1_width + (bar_width - team1_width) // 2 - 20, bar_y + 15),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+        )
+
+        # Add border
+        cv2.rectangle(
+            frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (0, 0, 0), 1
+        )
+
+        return frame
+
+
+# Initialize ball possession tracker
+ball_possession_tracker = BallPossessionTracker()
 
 
 def get_dominant_color(image, x, y, w, h):
@@ -238,6 +523,10 @@ def process_frame(ch, method, properties, body):
         # Count of detections per team
         team_counts = {1: 0, 2: 0, "referee": 0, "unassigned": 0}
 
+        # Track all players and ball position
+        all_players = {}
+        ball_position = None
+
         # Initialize teams if not done yet
         if not team_assigner.teams_initialized and len(predictions["predictions"]) >= 4:
             team_assigner.assign_teams(
@@ -265,6 +554,7 @@ def process_frame(ch, method, properties, body):
 
             # For balls, use default detection
             if class_name == "football" or class_name == "ball":
+                ball_position = (x, y)
                 cv2.circle(display_frame, (int(x), int(y)), int(w / 2), (0, 0, 255), 2)
                 label = f"ball {conf:.2f}"
                 cv2.putText(
@@ -287,6 +577,7 @@ def process_frame(ch, method, properties, body):
                 bbox_color = (0, 255, 255)  # Yellow for referees
                 label = f"referee {conf:.2f}"
                 team_counts["referee"] += 1
+                all_players[player_id] = {"x": x, "y": y, "team": "referee"}
             else:
                 # Get team assignment
                 team_id = team_assigner.get_player_team(frame, (x, y, w, h), player_id)
@@ -300,11 +591,13 @@ def process_frame(ch, method, properties, body):
                     )
                     label = f"Team {team_id} {conf:.2f}"
                     team_counts[team_id] += 1
+                    all_players[player_id] = {"x": x, "y": y, "team": team_id}
                 else:
                     # Fallback if team colors not initialized yet
                     bbox_color = (0, 255, 0)  # Default to green
                     label = f"Team {team_id} {conf:.2f}"
                     team_counts[team_id] += 1
+                    all_players[player_id] = {"x": x, "y": y, "team": "unassigned"}
 
             # Draw bounding box
             cv2.rectangle(
@@ -325,6 +618,18 @@ def process_frame(ch, method, properties, body):
                 bbox_color,
                 2,
             )
+
+        # Update ball possession if ball is detected and teams initialized
+        if ball_position and team_assigner.teams_initialized:
+            possession_team, closest_player = ball_possession_tracker.update_possession(
+                all_players, ball_position, frame_count
+            )
+        else:
+            # If ball is not found in this frame, don't update possession
+            possession_team = None
+
+        # Always draw possession bar with smoothed stats for visual display
+        display_frame = ball_possession_tracker.draw_possession_bar(display_frame)
 
         # Add team statistics to the frame
         if team_assigner.teams_initialized:
@@ -356,11 +661,51 @@ def process_frame(ch, method, properties, body):
                 "frames_processed": 0,
                 "total_frames": 0,
                 "completed": False,
-                "team_stats": {"team1_possession": 0, "team2_possession": 0},
+                "team_stats": {
+                    "team1_possession": 50.0,  # Start balanced
+                    "team2_possession": 50.0,  # Start balanced
+                    "final_possession": {
+                        "team1": 50.0,
+                        "team2": 50.0,
+                        "timestamp": time.time(),
+                        "frames_analyzed": 0,
+                    },
+                },
             }
 
         status["frames_processed"] = frame_count + 1
         status["last_frame"] = frame_count
+
+        # Only update possession stats if we've tracked some possession
+        if sum(ball_possession_tracker.possession_durations.values()) > 0:
+            # Get raw stats for data storage
+            possession_stats = ball_possession_tracker.get_possession_stats(
+                smoothed=False
+            )
+            status["team_stats"]["team1_possession"] = possession_stats[1]
+            status["team_stats"]["team2_possession"] = possession_stats[2]
+
+            # Update final possession result with raw stats
+            status["team_stats"]["final_possession"] = {
+                "team1": possession_stats[1],
+                "team2": possession_stats[2],
+                "timestamp": time.time(),
+                "frames_analyzed": frame_count + 1,
+            }
+        else:
+            # No possession established yet, maintain 50-50
+            status["team_stats"]["team1_possession"] = 50.0
+            status["team_stats"]["team2_possession"] = 50.0
+            status["team_stats"]["final_possession"] = {
+                "team1": 50.0,
+                "team2": 50.0,
+                "timestamp": time.time(),
+                "frames_analyzed": frame_count + 1,
+            }
+
+        # Remove the history array if it exists
+        if "possession_history" in status["team_stats"]:
+            del status["team_stats"]["possession_history"]
 
         with open("consumer_status.json", "w") as f:
             json.dump(status, f)
@@ -420,48 +765,118 @@ def start_consuming():
             )
 
             # Start consuming
-            channel.start_consuming()
-
-        except pika.exceptions.ConnectionClosedByBroker:
-            print("Connection was closed by broker, retrying in 5 seconds...")
-            time.sleep(5)
-            continue
-        except pika.exceptions.AMQPConnectionError:
-            print("Lost connection to RabbitMQ, retrying in 5 seconds...")
-            time.sleep(5)
-            continue
-        except KeyboardInterrupt:
-            print("Stopping consumer...")
             try:
-                if channel:
-                    channel.close()
-                if connection:
-                    connection.close()
-            except:
-                pass
-            break
+                channel.start_consuming()
+            except KeyboardInterrupt:
+                # On keyboard interrupt, update status to completed before exiting
+                try:
+                    with open("consumer_status.json", "r") as f:
+                        status = json.load(f)
+                    status["completed"] = True
+                    # Final possession is already continuously updated
+                    with open("consumer_status.json", "w") as f:
+                        json.dump(status, f)
+                    print("Processing marked as completed.")
+                except Exception as e:
+                    print(f"Error updating completion status: {e}")
+
+                print("Stopping consumer...")
+                try:
+                    if channel:
+                        channel.close()
+                    if connection:
+                        connection.close()
+                except:
+                    pass
+                # Exit the loop on keyboard interrupt
+                break
+            except pika.exceptions.ConnectionClosedByBroker:
+                print("Connection was closed by broker, retrying in 5 seconds...")
+                time.sleep(5)
+                continue
+            except pika.exceptions.AMQPConnectionError:
+                print("Lost connection to RabbitMQ, retrying in 5 seconds...")
+                time.sleep(5)
+                continue
+
         except Exception as e:
             print(f"Consumer error: {str(e)}")
             traceback.print_exc()
+
+            # Try to mark as completed even on error
+            try:
+                with open("consumer_status.json", "r") as f:
+                    status = json.load(f)
+                status["completed"] = True
+                with open("consumer_status.json", "w") as f:
+                    json.dump(status, f)
+            except:
+                pass
+
             print("Retrying in 5 seconds...")
             time.sleep(5)
             continue
 
+
+def finalize_processing():
+    """Update status file to mark processing as completed and save final stats"""
+    try:
+        with open("consumer_status.json", "r") as f:
+            status = json.load(f)
+
+        status["completed"] = True
+        # Make sure the final possession stats are saved
+        possession_stats = ball_possession_tracker.get_possession_stats(smoothed=False)
+        status["team_stats"]["final_possession"] = {
+            "team1": possession_stats[1],
+            "team2": possession_stats[2],
+            "timestamp": time.time(),
+            "frames_analyzed": status.get("frames_processed", 0),
+            "final": True,  # Mark this as the definitive final value
+        }
+
+        with open("consumer_status.json", "w") as f:
+            json.dump(status, f)
+        print("Processing finalized with possession stats saved.")
+    except Exception as e:
+        print(f"Error finalizing processing: {e}")
+
+
+# Register finalize_processing to run on exit
+import atexit
+
+atexit.register(finalize_processing)
 
 if __name__ == "__main__":
     # Ensure the processed frames directory exists
     if not os.path.exists(PROCESSED_FRAMES_DIR):
         os.makedirs(PROCESSED_FRAMES_DIR)
 
-    # Initialize status file
+    # Initialize with exactly balanced possession
     status = {
         "frames_processed": 0,
         "total_frames": 0,
         "completed": False,
-        "team_stats": {"team1_possession": 0, "team2_possession": 0},
+        "team_stats": {
+            "team1_possession": 50.0,
+            "team2_possession": 50.0,
+            "final_possession": {
+                "team1": 50.0,
+                "team2": 50.0,
+                "timestamp": time.time(),
+                "frames_analyzed": 0,
+            },
+        },
     }
+
     with open("consumer_status.json", "w") as f:
         json.dump(status, f)
 
-    print("Starting consumer process...")
-    start_consuming()
+    try:
+        print("Starting consumer process...")
+        start_consuming()
+    except KeyboardInterrupt:
+        print("Consumer interrupted by user")
+    finally:
+        # Ensure we save the final possession stats when exiting
+        finalize_processing()

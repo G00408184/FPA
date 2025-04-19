@@ -1,1 +1,1 @@
-{"frames_processed": 749, "total_frames": 0, "completed": false, "team_stats": {"team1_possession": 0, "team2_possession": 0}, "last_frame": 748}
+{"frames_processed": 750, "total_frames": 0, "completed": false, "team_stats": {"team1_possession": 86.70605580894754, "team2_possession": 13.293944191052482, "final_possession": {"team1": 86.70605580894754, "team2": 13.293944191052482, "timestamp": 1745077389.739868, "frames_analyzed": 750}}, "last_frame": 749}
