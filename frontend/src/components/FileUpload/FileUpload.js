@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import {
     Button,
     Dialog,
@@ -118,6 +119,8 @@ const FileUpload = () => {
     // Effective backend availability combines status and force flag
     const backendAvailable = backendAvailableStatus || forceRealBackend;
 
+    const navigate = useNavigate();
+
     const handleProcessingComplete = useCallback(() => {
         if (statusInterval) {
             clearInterval(statusInterval);
@@ -139,6 +142,7 @@ const FileUpload = () => {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
             console.log('Processing status:', response.data);
             
+            // Extract data from response
             const { frames_processed, total_frames, completed } = response.data;
             
             // If we're in processing mode but getting no frames_processed, show indeterminate progress
@@ -156,8 +160,8 @@ const FileUpload = () => {
                     const progress = Math.min(100, Math.round((frames_processed / total_frames) * 100));
                     setProcessingProgress(progress);
                     
-                    // Show message with detailed progress info
-                    const progressMessage = `Processing: ${frames_processed}/${total_frames} frames (${progress}%)`;
+                    // Show message with detailed progress info - Add +1 to frames_processed for display since counting starts at 0
+                    const progressMessage = `Processing: ${frames_processed+1}/${total_frames} frames (${progress}%)`;
                     setSnackbarMessage(progressMessage);
                     setShowSnackbar(true);
                 } else {
@@ -167,7 +171,7 @@ const FileUpload = () => {
                 }
                 
                 // Check if processing is complete
-                if (completed || (total_frames > 0 && frames_processed >= total_frames)) {
+                if (completed || (total_frames > 0 && frames_processed+1 >= total_frames)) {
                     console.log('Processing completed!');
                     // Clear any existing intervals
                     if (statusInterval) {
@@ -331,32 +335,14 @@ const FileUpload = () => {
             console.log('Generate video response:', response.data);
             
             if (response.status === 200) {
-                setSnackbarMessage('Video generated successfully! Downloading...');
+                setSnackbarMessage('Video generated successfully! Redirecting to results...');
                 setShowSnackbar(true);
                 
-                // Try to fetch the file first to verify it exists
-                try {
-                    // Make a HEAD request to check if the file exists
-                    await axios.head(`${BACKEND_URL}/download-video`, { timeout: 5000 });
-                    
-                    // File exists, trigger download
-                    console.log('Video file confirmed to exist, starting download...');
-                    window.location.href = `${BACKEND_URL}/download-video`;
-                    
-                    // Close the dialog after successful generation
-                    setShowGenerateDialog(false);
-                } catch (downloadError) {
-                    console.error('Error verifying video file:', downloadError);
-                    setError('The video was generated but there was an issue downloading it. Retrying in 3 seconds...');
-                    setShowSnackbar(true);
-                    
-                    // Retry download after a delay
-                    setTimeout(() => {
-                        console.log('Retrying download...');
-                        window.location.href = `${BACKEND_URL}/download-video`;
-                        setShowGenerateDialog(false);
-                    }, 3000);
-                }
+                // Close the dialog
+                setShowGenerateDialog(false);
+                
+                // Navigate to results page
+                navigate('/results');
             } else {
                 throw new Error(`Server responded with status code: ${response.status}`);
             }

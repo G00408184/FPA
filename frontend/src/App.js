@@ -14,6 +14,7 @@ import FileUpload from './components/FileUpload/FileUpload';
 import Welcome from './components/Welcome/Welcome';
 import About from './components/About/About';
 import Tutorial from './components/Tutorial/Tutorial';
+import ResultsPage from './components/ResultsPage/ResultsPage';
 import './index.css';
 
 // Router wrapper component with location for animations
@@ -41,6 +42,16 @@ const AnimatedRoutes = () => {
             transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1.0] }}
           >
             <FileUpload />
+          </motion.div>
+        } />
+        <Route path="/results" element={
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1.0] }}
+          >
+            <ResultsPage />
           </motion.div>
         } />
         <Route path="/tutorial" element={
@@ -385,7 +396,7 @@ function App() {
               transition={{ delay: 0.5 }}
               className="mt-12 text-center text-sm text-gray-500 dark:text-gray-400"
             >
-              <p>© {new Date().getFullYear()} Football Performance Analyzer. All rights reserved.</p>
+              
             </motion.footer>
           </div>
         </div>
