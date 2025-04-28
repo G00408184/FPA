@@ -252,7 +252,7 @@ function App() {
                 </motion.button>
                 
                 <motion.a
-                  href="https://github.com"
+                  href="https://github.com/G00408184/FPA"
                   target="_blank"
                   rel="noopener noreferrer"
                   whileHover={{ scale: 1.05 }}
@@ -345,7 +345,7 @@ function App() {
                     className="pt-4 mt-4 border-t border-gray-200 dark:border-gray-800"
                   >
                     <a
-                      href="https://github.com"
+                      href="https://github.com/G00408184/FPA"
                       target="_blank"
                       rel="noopener noreferrer"
                       className={`flex items-center space-x-3 p-4 rounded-xl ${
@@ -386,11 +386,6 @@ function App() {
               className="mt-12 text-center text-sm text-gray-500 dark:text-gray-400"
             >
               <p>© {new Date().getFullYear()} Football Performance Analyzer. All rights reserved.</p>
-              <div className="flex justify-center space-x-4 mt-3">
-                <a href="/privacy" className="hover:text-blue-500 transition-colors">Privacy</a>
-                <a href="/terms" className="hover:text-blue-500 transition-colors">Terms</a>
-                <a href="/contact" className="hover:text-blue-500 transition-colors">Contact</a>
-              </div>
             </motion.footer>
           </div>
         </div>

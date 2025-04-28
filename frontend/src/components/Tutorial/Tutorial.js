@@ -53,7 +53,7 @@ const steps = [
     icon: <Analytics />,
     title: "View Analysis",
     description: "Watch as my system tracks players, identifies teams, and generates possession statistics in real-time.",
-    details: "Interactive visualizations allow you to explore player positioning, movement patterns, and team formations at any point during the match.",
+    details: "Visualizations allow you to explore player positioning, movement patterns, and team formations at any point during the match.",
     color: "bg-indigo-500"
   },
  

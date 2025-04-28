@@ -388,9 +388,10 @@ app.get('/possession-stats', (req, res) => {
                 const fileContent = fs.readFileSync('consumer_status.json', 'utf8');
                 if (!fileContent || fileContent.trim() === '') {
                     return res.json({
-                        team1: 50,
-                        team2: 50,
+                        team1: 0,
+                        team2: 0,
                         frames_analyzed: 0,
+                        last_possession: null,
                         message: 'No data available yet'
                     });
                 }
@@ -404,6 +405,7 @@ app.get('/possession-stats', (req, res) => {
                         team1: possession.team1,
                         team2: possession.team2,
                         frames_analyzed: possession.frames_analyzed || status.frames_processed,
+                        last_possession: status.team_stats.last_possession || null,
                         timestamp: possession.timestamp,
                         message: 'Possession data retrieved successfully'
                     });
@@ -413,13 +415,14 @@ app.get('/possession-stats', (req, res) => {
                         team1: status.team_stats.team1_possession,
                         team2: status.team_stats.team2_possession,
                         frames_analyzed: status.frames_processed,
+                        last_possession: status.team_stats.last_possession || null,
                         message: 'Current possession data retrieved'
                     });
                 } else {
                     // Default values if no possession data
                     return res.json({
-                        team1: 50,
-                        team2: 50,
+                        team1: 0,
+                        team2: 0,
                         frames_analyzed: status.frames_processed || 0,
                         message: 'No possession data available yet'
                     });
@@ -427,8 +430,8 @@ app.get('/possession-stats', (req, res) => {
             } catch (parseError) {
                 console.error('JSON parse error in possession stats:', parseError);
                 return res.json({
-                    team1: 50,
-                    team2: 50,
+                    team1: 0,
+                    team2: 0,
                     frames_analyzed: 0,
                     error: 'Could not parse possession data',
                     message: 'Error retrieving possession data'
@@ -436,8 +439,8 @@ app.get('/possession-stats', (req, res) => {
             }
         } else {
             return res.json({
-                team1: 50,
-                team2: 50,
+                team1: 0,
+                team2: 0,
                 frames_analyzed: 0,
                 message: 'No possession data available yet'
             });
@@ -445,8 +448,8 @@ app.get('/possession-stats', (req, res) => {
     } catch (error) {
         console.error('Error reading possession stats:', error);
         return res.status(500).json({
-            team1: 50,
-            team2: 50,
+            team1: 0,
+            team2: 0,
             frames_analyzed: 0,
             error: error.message,
             message: 'Error retrieving possession data'
@@ -488,6 +491,94 @@ app.get('/latest-possession-frame', (req, res) => {
         console.error('Error getting latest possession frame:', error);
         res.status(500).send('Error retrieving latest frame');
     }
+});
+
+// Generate video endpoint
+app.post('/generate-video', (req, res) => {
+    try {
+        console.log('Starting video generation process...');
+        
+        // Make sure the processed_frames directory exists
+        if (!fs.existsSync('processed_frames')) {
+            console.error('Error: processed_frames directory not found');
+            return res.status(404).json({ error: 'processed_frames directory not found' });
+        }
+        
+        // Count processed frames to make sure we have something to work with
+        const frameCount = fs.readdirSync('processed_frames').filter(f => f.endsWith('.jpg')).length;
+        console.log(`Found ${frameCount} frames in processed_frames directory`);
+        
+        if (frameCount === 0) {
+            console.error('Error: No frames found in processed_frames directory');
+            return res.status(404).json({ error: 'No frames found in processed_frames directory' });
+        }
+        
+        // Spawn the generate_video.py script
+        const generateProcess = spawn('python', ['generate_video.py'], {
+            cwd: __dirname
+        });
+        
+        let stdoutData = '';
+        let stderrData = '';
+        
+        generateProcess.stdout.on('data', (data) => {
+            stdoutData += data.toString();
+            console.log(`Generate video output: ${data}`);
+        });
+        
+        generateProcess.stderr.on('data', (data) => {
+            stderrData += data.toString();
+            console.error(`Generate video error: ${data}`);
+        });
+        
+        generateProcess.on('close', (code) => {
+            console.log(`Generate video process exited with code ${code}`);
+            
+            // Check if output file exists to confirm success
+            const videoPath = path.join(__dirname, 'output_video.mp4');
+            if (code === 0 && fs.existsSync(videoPath)) {
+                console.log('Video generation completed successfully');
+                res.json({ 
+                    message: 'Video generation completed successfully',
+                    video_path: '/download-video'
+                });
+            } else {
+                console.error('Video generation failed:', stderrData);
+                res.status(500).json({ 
+                    error: 'Video generation failed', 
+                    details: stderrData,
+                    stdout: stdoutData
+                });
+            }
+        });
+    } catch (error) {
+        console.error('Error generating video:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Download video endpoint
+app.get('/download-video', (req, res) => {
+    // Try multiple possible paths for the video file
+    const possiblePaths = [
+        path.join(__dirname, 'output_video.mp4'),          // Direct in current directory
+        path.join(__dirname, 'processed_frames', 'output_video.mp4') // Another possibility
+    ];
+    
+    console.log('Looking for video file in multiple locations...');
+    
+    // Try each path
+    for (const videoPath of possiblePaths) {
+        console.log('Checking path:', videoPath);
+        if (fs.existsSync(videoPath)) {
+            console.log('Video file found at:', videoPath);
+            return res.download(videoPath);
+        }
+    }
+    
+    // If we get here, we couldn't find the file
+    console.error('Error: Video file not found in any of the expected locations');
+    return res.status(404).send('Video not found. Please try generating it again.');
 });
 
 // Start the server

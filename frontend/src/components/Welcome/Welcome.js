@@ -7,9 +7,7 @@ import {
   PeopleAlt, 
   SportsSoccer, 
   ArrowForward,
-  Insights,
-  Psychology,
-  DataUsage
+  
 } from '@mui/icons-material';
 
 // Animation variants
@@ -92,34 +90,16 @@ const features = [
   {
     icon: <PeopleAlt />,
     title: "Team Analysis",
-    description: "Track player positions, team formations, and tactical patterns throughout the match.",
+    description: "Track player positions and team possession throughout the match.",
     color: "from-green-500 to-green-600"
   },
-  {
-    icon: <Insights />,
-    title: "Performance Metrics",
-    description: "Measure sprint speeds, distances covered, positioning, and other key performance indicators.",
-    color: "from-indigo-500 to-indigo-600"
-  },
-  {
-    icon: <Psychology />,
-    title: "AI-Powered Insights",
-    description: "Leverage machine learning to identify patterns and improvement opportunities.",
-    color: "from-amber-500 to-amber-600"
-  },
-  {
-    icon: <DataUsage />,
-    title: "Data Visualization",
-    description: "Intuitive charts and heatmaps help you understand complex match data at a glance.",
-    color: "from-cyan-500 to-cyan-600"
-  }
+
 ];
 
 const benefits = [
   "Identify strengths and weaknesses in your team's performance",
   "Develop data-driven training strategies",
   "Track player development over time",
-  "Compare performance across multiple matches",
   "Make informed tactical decisions based on objective data"
 ];
 
@@ -153,8 +133,7 @@ const Welcome = () => {
               variants={itemVariants}
               className="mt-6 text-xl leading-relaxed text-blue-100"
             >
-              Unlock the power of advanced video processing to analyze player movements, team formations,
-              and match statistics with unprecedented accuracy and detail.
+              Unlock the power of advanced video processing to analyze match statistics.
             </motion.p>
             
             <motion.div
@@ -350,7 +329,7 @@ const Welcome = () => {
             variants={itemVariants}
             className="mt-4 text-xl text-blue-100 max-w-2xl mx-auto"
           >
-            Upload your football match video and let our AI do the analysis for you.
+            Upload your football match video and let the Football Performance Analyzer do the analysis for you.
             Get started in minutes and unlock powerful insights about your team's performance.
           </motion.p>
           
