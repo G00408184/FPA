@@ -1,23 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Code, SportsSoccer, GitHub, } from '@mui/icons-material';
+import {  GitHub, } from '@mui/icons-material';
 
-const features = [
-  {
-    icon: <SportsSoccer className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
-    title: "Player Detection",
-    description: "Advanced AI algorithms to detect and track players in real-time"
-  },
-  {
-    icon: <Code className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
-    title: "Open Source",
-    description: "Built with transparency and community collaboration in mind"
-  }
-];
+
 
 const techStack = [
   { name: 'React', bgColor: 'bg-blue-500' },
-  { name: 'TensorFlow', bgColor: 'bg-orange-500' },
+  { name: 'Yolo', bgColor: 'bg-orange-500' },
   { name: 'OpenCV', bgColor: 'bg-green-500' },
   { name: 'Python', bgColor: 'bg-yellow-500' }
 ];
@@ -68,36 +57,10 @@ const About = () => {
         </motion.div>
       </div>
 
-      {/* Features Grid */}
       <motion.div variants={itemVariants} className="px-4">
         <div className="text-center mb-12">
           <h2 className="text-3xl font-bold mb-2">Key Features</h2>
           <div className="w-20 h-1 bg-blue-500 mx-auto rounded-full"></div>
-        </div>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-6xl mx-auto">
-          {features.map((feature, index) => (
-            <motion.div
-              key={index}
-              whileHover={{ y: -8 }}
-              className="group rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700"
-            >
-              <div className="p-8 flex items-start space-x-6">
-                <div className="p-4 rounded-full bg-blue-50 dark:bg-blue-900/20 group-hover:bg-blue-600 transition-colors duration-300">
-                  {feature.icon}
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-xl font-bold group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors duration-300">
-                    {feature.title}
-                  </h3>
-                  <p className="text-gray-600 dark:text-gray-300">
-                    {feature.description}
-                  </p>
-                </div>
-              </div>
-              <div className="h-1 w-full bg-gradient-to-r from-transparent via-blue-500 to-transparent scale-x-0 group-hover:scale-x-100 transition-transform duration-300 origin-left"></div>
-            </motion.div>
-          ))}
         </div>
       </motion.div>
 
@@ -128,7 +91,7 @@ const About = () => {
         </div>
       </motion.div>
 
-      {/* Contact Section */}
+      {/* GitHub Link Section */}
       <motion.div
         variants={itemVariants}
         className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 to-blue-900 max-w-5xl mx-auto shadow-2xl"
@@ -138,10 +101,9 @@ const About = () => {
         <div className="absolute -bottom-32 -left-32 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
         
         <div className="relative z-10 p-12 text-center space-y-6">
-          <h3 className="text-3xl font-bold text-white">Get in Touch</h3>
+          <h3 className="text-3xl font-bold text-white">Project Repository</h3>
           <p className="text-blue-100 max-w-2xl mx-auto">
-            Have questions or suggestions? We'd love to hear from you! 
-            Our team is always open to feedback and collaboration opportunities.
+            Check out the source code for this project on GitHub.
           </p>
           
           <div className="flex justify-center space-x-4 pt-4">

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 import {
     Button,
     Dialog,
@@ -118,6 +119,8 @@ const FileUpload = () => {
     // Effective backend availability combines status and force flag
     const backendAvailable = backendAvailableStatus || forceRealBackend;
 
+    const navigate = useNavigate();
+
     const handleProcessingComplete = useCallback(() => {
         if (statusInterval) {
             clearInterval(statusInterval);
@@ -139,10 +142,17 @@ const FileUpload = () => {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
             console.log('Processing status:', response.data);
             
+            // Extract data from response
             const { frames_processed, total_frames, completed } = response.data;
             
-            // Update UI even if we're still waiting for frames
-            if (frames_processed > 0) {
+            // If we're in processing mode but getting no frames_processed, show indeterminate progress
+            if (isProcessing && frames_processed === 0) {
+                // Keep the indeterminate progress bar
+                setProcessingProgress(0);
+                console.log('Still waiting for frames to be processed...');
+            }
+            // Update UI when we get frame data
+            else if (frames_processed > 0) {
                 setIsProcessing(true);
                 
                 // When we have both frames_processed and total_frames, show accurate progress
@@ -150,8 +160,8 @@ const FileUpload = () => {
                     const progress = Math.min(100, Math.round((frames_processed / total_frames) * 100));
                     setProcessingProgress(progress);
                     
-                    // Show message with detailed progress info
-                    const progressMessage = `Processing: ${frames_processed}/${total_frames} frames (${progress}%)`;
+                    // Show message with detailed progress info - Add +1 to frames_processed for display since counting starts at 0
+                    const progressMessage = `Processing: ${frames_processed+1}/${total_frames} frames (${progress}%)`;
                     setSnackbarMessage(progressMessage);
                     setShowSnackbar(true);
                 } else {
@@ -161,7 +171,7 @@ const FileUpload = () => {
                 }
                 
                 // Check if processing is complete
-                if (completed || (total_frames > 0 && frames_processed >= total_frames)) {
+                if (completed || (total_frames > 0 && frames_processed+1 >= total_frames)) {
                     console.log('Processing completed!');
                     // Clear any existing intervals
                     if (statusInterval) {
@@ -174,8 +184,12 @@ const FileUpload = () => {
             }
         } catch (error) {
             console.error('Status check error:', error);
+            // Don't stop checking if we hit a temporary error
+            if (isProcessing) {
+                console.log('Continuing to check status despite error...');
+            }
         }
-    }, [handleProcessingComplete, statusInterval]);
+    }, [handleProcessingComplete, statusInterval, isProcessing]);
 
     useEffect(() => {
         // Clean up interval on unmount
@@ -304,16 +318,60 @@ const FileUpload = () => {
             setSnackbarMessage('Generating final video...');
             setShowSnackbar(true);
             
-            await axios.post(`${BACKEND_URL}/generate-video`);
-            window.location.href = `${BACKEND_URL}/download-video`;
-            setSnackbarMessage('Video processing complete!');
-            setShowSnackbar(true);
-            setShowGenerateDialog(false);
+            // Add loading state
+            const generatingElement = document.getElementById('generateBtn');
+            if (generatingElement) {
+                generatingElement.disabled = true;
+                generatingElement.textContent = 'Generating...';
+            }
+            
+            console.log('Calling generate-video endpoint...');
+            
+            // Set a timeout for the request
+            const response = await axios.post(`${BACKEND_URL}/generate-video`, {}, {
+                timeout: 300000 // 5 minute timeout for video generation
+            });
+            
+            console.log('Generate video response:', response.data);
+            
+            if (response.status === 200) {
+                setSnackbarMessage('Video generated successfully! Redirecting to results...');
+                setShowSnackbar(true);
+                
+                // Close the dialog
+                setShowGenerateDialog(false);
+                
+                // Navigate to results page
+                navigate('/results');
+            } else {
+                throw new Error(`Server responded with status code: ${response.status}`);
+            }
         } catch (error) {
-            setError('Error generating video');
-            setSnackbarMessage('Error generating video');
+            console.error('Error generating video:', error);
+            let errorMessage = 'Error generating video';
+            
+            if (error.response) {
+                // Server responded with an error status code
+                errorMessage = `Error: ${error.response.status} - ${error.response.data.error || 'Server error'}`;
+                console.error('Error response data:', error.response.data);
+            } else if (error.request) {
+                // Request was made but no response received
+                errorMessage = 'No response from server. The video might still be generating.';
+            } else {
+                // Error setting up the request
+                errorMessage = `Request error: ${error.message}`;
+            }
+            
+            setError(errorMessage);
+            setSnackbarMessage(errorMessage);
             setShowSnackbar(true);
-            console.error('Video generation error:', error);
+        } finally {
+            // Reset button state
+            const generatingElement = document.getElementById('generateBtn');
+            if (generatingElement) {
+                generatingElement.disabled = false;
+                generatingElement.textContent = 'Generate Video';
+            }
         }
     };
 
@@ -488,7 +546,7 @@ const FileUpload = () => {
                             <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
                                 {processingProgress > 0 
                                     ? `${processingProgress.toFixed(0)}% processed` 
-                                    : "Processing starting..."}
+                                    : "Processing starting... This may take a moment"}
                             </Typography>
                         </Box>
                     )}
@@ -553,12 +611,18 @@ const FileUpload = () => {
                     </Typography>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setShowGenerateDialog(false)}>Cancel</Button>
                     <Button 
+                        onClick={() => setShowGenerateDialog(false)}
+                        variant="outlined"
+                    >
+                        Cancel
+                    </Button>
+                    <Button 
+                        id="generateBtn"
                         onClick={handleGenerateVideo} 
                         variant="contained" 
                         color="primary"
-                        startIcon={<CloudUploadIcon />}
+                        startIcon={<VideoLibraryIcon />}
                     >
                         Generate Video
                     </Button>

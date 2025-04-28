@@ -2,12 +2,31 @@
 flask==2.0.1
 flask-cors==3.0.10
 werkzeug==2.0.3
-opencv-python==4.11.0.86
-numpy>=1.22.0
-torch>=1.12.0             # PyTorch for deep learning
-ultralytics       # YOLOv8 implementation
-pika==1.2.0
-roboflow>=0.2.27
-scikit-learn>=1.0.2
-Pillow>=8.3.1
-waitress==2.0.0
+opencv-python==4.11.0.86  # For image and video processing
+numpy>=1.22.0            # For numerical operations
+torch>=1.12.0            # PyTorch for deep learning
+ultralytics>=8.0.0       # YOLOv8 implementation
+pika==1.2.0              # For RabbitMQ message queue
+roboflow>=0.2.27         # For model access
+scikit-learn>=1.0.2      # For K-means clustering
+Pillow>=8.3.1            # For image processing
+waitress==2.0.0          # Production WSGI server
+tqdm>=4.64.0             # For progress bars
+argparse>=1.4.0          # For command line arguments
+atexit                   # For exit handlers (standard library)
+concurrent.futures       # For parallel processing (standard library)
+deque                    # From collections (standard library)
+subprocess               # For running system commands (standard library)
+threading                # For multi-threading (standard library)
+json                     # For JSON handling (standard library)
+pickle                   # For serialization (standard library)
+os                       # For OS interactions (standard library)
+sys                      # For system-specific parameters (standard library)
+shutil                   # For file operations (standard library)
+time                     # For time-related functions (standard library)
+traceback                # For exception handling (standard library)
+
+# Additional dependencies for the frontend (handled by package.json)
+# - React.js
+# - Material-UI
+# - Tailwind CSS
