@@ -70,9 +70,9 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         // Store path to the uploaded video
         uploadedVideoPath = path.join(__dirname, 'uploads', req.file.filename);
         
-        // Set fixed frame count 
-        const totalFrames = 749;
-        
+        // Set fixed frame count - no ffprobe detection
+        const totalFrames = 750;
+        console.log('Using fixed frame count of 750');
         
         // Create initial status file with total frames
         const initialStatus = {
@@ -86,7 +86,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         };
         
         fs.writeFileSync('consumer_status.json', JSON.stringify(initialStatus));
-        console.log('Created initial status file with total frames:', totalFrames);
+        
         
         // Start producer process with the video file path
         console.log('Starting producer.py...');
@@ -146,36 +146,6 @@ app.post('/start-producer', (req, res) => {
     }
 });
 
-// Add the startProducer function here
-function startProducer() {
-    try {
-        console.log('Starting producer.py...');
-        
-        producerProcess = spawn('python', ['producer.py'], {
-            cwd: __dirname,
-            stdio: ['ignore', 'pipe', 'pipe']
-        });
-        
-        producerProcess.stdout.on('data', (data) => {
-            console.log(`Producer output: ${data}`);
-        });
-        
-        producerProcess.stderr.on('data', (data) => {
-            console.error(`Producer error: ${data}`);
-        });
-        
-        producerProcess.on('exit', (code) => {
-            console.log(`Producer process exited with code ${code}`);
-            producerProcess = null;
-        });
-        
-        return producerProcess;
-    } catch (error) {
-        console.error('Error starting producer:', error);
-        return null;
-    }
-}
-
 // Status endpoint
 app.get('/status', (req, res) => {
     res.json({ status: 'running' });
@@ -190,8 +160,8 @@ app.post('/start-analysis', (req, res) => {
             consumerProcesses = [];
         }
         
-        console.log('Starting analysis with multiple consumers...');
-        consumerProcesses = startConsumers(3); // Start 3 consumer processes
+        console.log('Starting analysis with consumer.py...');
+        consumerProcesses = startConsumers(1);
         
         consumerProcesses.forEach(process => {
             process.stdout.on('data', (data) => {
@@ -207,56 +177,12 @@ app.post('/start-analysis', (req, res) => {
             });
         });
         
-        // Wait a moment to let consumers start up
+        // Wait a moment to let consumer start up
         setTimeout(() => {
-            res.json({ 
-                message: 'Analysis started successfully', 
-                consumers_started: consumerProcesses.length 
-            });
+            res.json({ message: 'Analysis started successfully' });
         }, 1000);
     } catch (error) {
         console.error('Error starting analysis:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Keep legacy endpoint for compatibility
-app.post('/start-consumer', (req, res) => {
-    try {
-        // Redirect to the new endpoint
-        console.log('Redirecting to start-analysis endpoint');
-        // Kill any existing consumer process
-        if (consumerProcesses.length > 0) {
-            consumerProcesses.forEach(process => process.kill());
-            consumerProcesses = [];
-        }
-        
-        console.log('Starting multiple consumers...');
-        consumerProcesses = startConsumers(3); // Start 3 consumer processes
-        
-        consumerProcesses.forEach(process => {
-            process.stdout.on('data', (data) => {
-                console.log(`Consumer output: ${data}`);
-            });
-            
-            process.stderr.on('data', (data) => {
-                console.error(`Consumer error: ${data}`);
-            });
-            
-            process.on('close', (code) => {
-                console.log(`Consumer process exited with code ${code}`);
-            });
-        });
-        
-        // Wait a moment to let consumers start up
-        setTimeout(() => {
-            res.json({ 
-                message: 'Consumers started successfully',
-                consumers_started: consumerProcesses.length
-            });
-        }, 1000);
-    } catch (error) {
-        console.error('Error starting consumers:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -267,9 +193,8 @@ app.get('/consumer-status', (req, res) => {
         if (fs.existsSync('consumer_status.json')) {
             const status = JSON.parse(fs.readFileSync('consumer_status.json', 'utf8'));
             
-            // If total_frames is missing or zero, use default 750
             if (!status.total_frames || status.total_frames <= 0) {
-                status.total_frames = 750;
+                status.total_frames = 749;
             }
             
             // Make sure we have a progress percent
@@ -330,7 +255,7 @@ app.post('/purge-queue', (req, res) => {
 });
 
 // Helper function to start multiple consumer processes
-function startConsumers(count = 3) {
+function startConsumers(count = 1) {
     const consumers = [];
     for (let i = 0; i < count; i++) {
         const process = spawn('python', ['consumer.py'], {
@@ -352,21 +277,6 @@ function startConsumers(count = 3) {
     return consumers;
 }
 
-// Helper function to stop all consumers
-function stopConsumers() {
-    if (consumerProcesses.length > 0) {
-        console.log('Stopping all consumers...');
-        consumerProcesses.forEach(process => {
-            try {
-                process.kill();
-            } catch (error) {
-                console.error('Error stopping consumer:', error);
-            }
-        });
-        consumerProcesses = [];
-    }
-}
-
 // Serve processed frames
 app.use('/processed-frames', express.static('processed_frames'));
 
@@ -380,118 +290,36 @@ app.get('/latest-frame', (req, res) => {
     }
 });
 
-// Possession statistics endpoint
-app.get('/possession-stats', (req, res) => {
+// Generate video endpoint
+app.post('/generate-video', (req, res) => {
     try {
-        if (fs.existsSync('consumer_status.json')) {
-            try {
-                const fileContent = fs.readFileSync('consumer_status.json', 'utf8');
-                if (!fileContent || fileContent.trim() === '') {
-                    return res.json({
-                        team1: 50,
-                        team2: 50,
-                        frames_analyzed: 0,
-                        message: 'No data available yet'
-                    });
-                }
-                
-                const status = JSON.parse(fileContent);
-                
-                // Extract team stats if available
-                if (status.team_stats && status.team_stats.final_possession) {
-                    const possession = status.team_stats.final_possession;
-                    return res.json({
-                        team1: possession.team1,
-                        team2: possession.team2,
-                        frames_analyzed: possession.frames_analyzed || status.frames_processed,
-                        timestamp: possession.timestamp,
-                        message: 'Possession data retrieved successfully'
-                    });
-                } else if (status.team_stats) {
-                    // Fall back to current possession if final is not available
-                    return res.json({
-                        team1: status.team_stats.team1_possession,
-                        team2: status.team_stats.team2_possession,
-                        frames_analyzed: status.frames_processed,
-                        message: 'Current possession data retrieved'
-                    });
-                } else {
-                    // Default values if no possession data
-                    return res.json({
-                        team1: 50,
-                        team2: 50,
-                        frames_analyzed: status.frames_processed || 0,
-                        message: 'No possession data available yet'
-                    });
-                }
-            } catch (parseError) {
-                console.error('JSON parse error in possession stats:', parseError);
-                return res.json({
-                    team1: 50,
-                    team2: 50,
-                    frames_analyzed: 0,
-                    error: 'Could not parse possession data',
-                    message: 'Error retrieving possession data'
-                });
-            }
-        } else {
-            return res.json({
-                team1: 50,
-                team2: 50,
-                frames_analyzed: 0,
-                message: 'No possession data available yet'
-            });
-        }
+        // Code to generate final video here
+        // This is just a placeholder - implement actual video generation
+        
+        res.json({ message: 'Video generation started' });
     } catch (error) {
-        console.error('Error reading possession stats:', error);
-        return res.status(500).json({
-            team1: 50,
-            team2: 50,
-            frames_analyzed: 0,
-            error: error.message,
-            message: 'Error retrieving possession data'
-        });
+        console.error('Error generating video:', error);
+        res.status(500).json({ error: error.message });
     }
 });
 
-// Serve a sample processed frame for possession verification
-app.get('/latest-possession-frame', (req, res) => {
-    // Find the latest frame in the processed_frames directory
-    try {
-        const processedFramesDir = 'processed_frames';
-        if (!fs.existsSync(processedFramesDir)) {
-            return res.status(404).send('No processed frames directory found');
-        }
-        
-        const files = fs.readdirSync(processedFramesDir);
-        if (files.length === 0) {
-            return res.status(404).send('No processed frames available');
-        }
-        
-        // Sort files by frame number (numerically)
-        const frameFiles = files
-            .filter(file => file.endsWith('.jpg'))
-            .sort((a, b) => {
-                const frameNumA = parseInt(a.replace('frame_', '').replace('.jpg', ''));
-                const frameNumB = parseInt(b.replace('frame_', '').replace('.jpg', ''));
-                return frameNumB - frameNumA; // Latest frame first
-            });
-            
-        if (frameFiles.length === 0) {
-            return res.status(404).send('No jpg frames available');
-        }
-        
-        // Send the most recent frame
-        const latestFrame = path.join(processedFramesDir, frameFiles[0]);
-        res.sendFile(path.resolve(latestFrame));
-    } catch (error) {
-        console.error('Error getting latest possession frame:', error);
-        res.status(500).send('Error retrieving latest frame');
+// Download video endpoint
+app.get('/download-video', (req, res) => {
+    const videoPath = path.join(__dirname, 'output_video.mp4');
+    if (fs.existsSync(videoPath)) {
+        res.download(videoPath);
+    } else {
+        res.status(404).send('Video not found');
     }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy' });
 });
 
 // Start the server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-});
+}); 

@@ -109,6 +109,7 @@ const FileUpload = () => {
     const [success, setSuccess] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [uploadComplete, setUploadComplete] = useState(false);
+    const [statusInterval, setStatusInterval] = useState(null);
     
     // Use our custom hook to check backend status but add option to force real backend
     const { isAvailable: backendAvailableStatus, isChecking: checkingBackend } = useBackendStatus();
@@ -118,50 +119,72 @@ const FileUpload = () => {
     const backendAvailable = backendAvailableStatus || forceRealBackend;
 
     const handleProcessingComplete = useCallback(() => {
+        if (statusInterval) {
+            clearInterval(statusInterval);
+            setStatusInterval(null);
+        }
+        
         setUploading(false);
         setIsProcessing(false);
+        setProcessingProgress(100);
         setSnackbarMessage('Processing completed!');
         setShowSnackbar(true);
         setShowGenerateDialog(true);
         const audio = new Audio('/notification.mp3');
         audio.play().catch(e => console.log('Audio play failed:', e));
-    }, []);
+    }, [statusInterval]);
 
     const checkProcessingStatus = useCallback(async () => {
         try {
             const response = await axios.get(`${BACKEND_URL}/consumer-status`);
+            console.log('Processing status:', response.data);
+            
             const { frames_processed, total_frames, completed } = response.data;
-           
-            if (total_frames > 0) {
+            
+            // Update UI even if we're still waiting for frames
+            if (frames_processed > 0) {
                 setIsProcessing(true);
-                const progress = (frames_processed / total_frames) * 100;
-                setProcessingProgress(progress);
-                setSnackbarMessage(`Processing: ${frames_processed}/${total_frames} frames`);
-                setShowSnackbar(true);
-               
-                if (completed) {
-                    handleProcessingComplete();
+                
+                // When we have both frames_processed and total_frames, show accurate progress
+                if (total_frames > 0) {
+                    const progress = Math.min(100, Math.round((frames_processed / total_frames) * 100));
+                    setProcessingProgress(progress);
+                    
+                    // Show message with detailed progress info
+                    const progressMessage = `Processing: ${frames_processed}/${total_frames} frames (${progress}%)`;
+                    setSnackbarMessage(progressMessage);
+                    setShowSnackbar(true);
                 } else {
-                    setTimeout(checkProcessingStatus, 1000);
+                    // Just show processed frame count but no percentage
+                    setSnackbarMessage(`Processing started: ${frames_processed} frames processed. Waiting for total frame count...`);
+                    setShowSnackbar(true);
+                }
+                
+                // Check if processing is complete
+                if (completed || (total_frames > 0 && frames_processed >= total_frames)) {
+                    console.log('Processing completed!');
+                    // Clear any existing intervals
+                    if (statusInterval) {
+                        clearInterval(statusInterval);
+                        setStatusInterval(null);
+                    }
+                    
+                    handleProcessingComplete();
                 }
             }
         } catch (error) {
             console.error('Status check error:', error);
-            setTimeout(checkProcessingStatus, 1000);
         }
-    }, [handleProcessingComplete]);
+    }, [handleProcessingComplete, statusInterval]);
 
     useEffect(() => {
-        // Only check processing status if we're actively processing
-        if (isProcessing) {
-            const intervalId = setInterval(() => {
-                checkProcessingStatus();
-            }, 3000);
-            
-            // Clean up the interval when component unmounts or processing stops
-            return () => clearInterval(intervalId);
-        }
-    }, [checkProcessingStatus, isProcessing]);
+        // Clean up interval on unmount
+        return () => {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        };
+    }, [statusInterval]);
 
     const handleFileChange = (e) => {
         const selectedFile = e.target.files[0];
@@ -189,39 +212,12 @@ const FileUpload = () => {
         setUploadProgress(0);
         setProcessingProgress(0);
 
-        // If backend is not available and not forcing real backend, simulate upload
-        if (!backendAvailable) {
-            console.log('Backend not available, simulating upload...');
-            
-            // Simulate upload progress
-            let progress = 0;
-            const interval = setInterval(() => {
-                progress += 10;
-                setUploadProgress(progress);
-                
-                if (progress >= 100) {
-                    clearInterval(interval);
-                    setSuccess(true);
-                    setUploadComplete(true);
-                    setSnackbarMessage('Upload complete! Click "Start Analysis" to begin processing.');
-                    setShowSnackbar(true);
-                    setUploading(false);
-                }
-            }, 500);
-            
-            return;
-        }
-
         try {
             // Clear any existing processing queue
-            try {
-                await axios.post(`${BACKEND_URL}/purge-queue`);
-                console.log('Queue purged successfully');
-            } catch (purgeError) {
-                console.log('Queue purge failed, continuing with upload:', purgeError);
-            }
+            await axios.post(`${BACKEND_URL}/purge-queue`);
+            console.log('Queue purged successfully');
            
-            // Create form data with single file field - the backend expects 'video'
+            // Create form data with single file field
             const formData = new FormData();
             formData.append('video', file);
             
@@ -232,7 +228,7 @@ const FileUpload = () => {
                 size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`
             });
            
-            // Upload the file to the server
+            // Upload with progress tracking
             const response = await axios.post(`${BACKEND_URL}/upload`, formData, {
                 onUploadProgress: (progressEvent) => {
                     const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -242,29 +238,13 @@ const FileUpload = () => {
             });
             
             console.log('Upload response:', response.data);
-
-            // File is uploaded, now start the producer
-            try {
-                console.log('Starting producer...');
-                await axios.post(`${BACKEND_URL}/start-producer`);
-                console.log('Producer started successfully');
-            } catch (producerError) {
-                console.error('Producer start error:', producerError);
-                setError(`Upload complete, but failed to start producer: ${producerError.message}`);
-                setSnackbarMessage('Upload complete, but failed to start producer. You can try manually starting the analysis.');
-                setShowSnackbar(true);
-                // Still mark upload as complete so user can try analysis
-            }
-
             setSuccess(true);
             setUploadComplete(true);
-            setSnackbarMessage('Upload complete and producer started! Click "Start Analysis" to begin processing.');
+            setSnackbarMessage('Upload complete! Click "Start Analysis" to begin processing.');
             setShowSnackbar(true);
         } catch (uploadError) {
             console.error('Upload error:', uploadError);
             if (uploadError.response) {
-                // The request was made and the server responded with a status code
-                // that falls out of the range of 2xx
                 console.error('Error response:', {
                     data: uploadError.response.data,
                     status: uploadError.response.status,
@@ -272,11 +252,9 @@ const FileUpload = () => {
                 });
                 setError(`Upload failed (${uploadError.response.status}): ${uploadError.response.data.message || uploadError.response.data || 'Please try again.'}`);
             } else if (uploadError.request) {
-                // The request was made but no response was received
                 console.error('No response received:', uploadError.request);
                 setError('No response from server. Please check if the backend is running.');
             } else {
-                // Something happened in setting up the request that triggered an Error
                 console.error('Request setup error:', uploadError.message);
                 setError(`Upload failed: ${uploadError.message}`);
             }
@@ -290,41 +268,24 @@ const FileUpload = () => {
     const handleStartProcessing = async () => {
         try {
             setIsProcessing(true);
+            setProcessingProgress(0);
             setSnackbarMessage('Starting video analysis...');
             setShowSnackbar(true);
             
-            // If backend is not available and not forcing real backend, simulate processing
-            if (!backendAvailable) {
-                console.log('Backend not available, simulating processing...');
-                
-                // Simulate processing progress
-                let progress = 0;
-                const interval = setInterval(() => {
-                    progress += 5;
-                    setProcessingProgress(progress);
-                    
-                    if (progress >= 100) {
-                        clearInterval(interval);
-                        setIsProcessing(false);
-                        setShowGenerateDialog(true);
-                        setSnackbarMessage('Processing completed! (SIMULATED)');
-                        setShowSnackbar(true);
-                    }
-                }, 800);
-                
-                // Clear file reference to prevent duplicate processing
-                setFile(null);
-                setUploadComplete(false);
-                return;
-            }
+            // Start the consumer process for analysis
+            console.log('Starting analysis...');
+            await axios.post(`${BACKEND_URL}/start-analysis`);
             
-            // Only start the consumer - producer already started during upload
-            console.log('Starting consumer...');
-            await axios.post(`${BACKEND_URL}/start-consumer`);
-            
-            // Start checking processing status
-            console.log('Checking processing status...');
+            // Start checking processing status immediately
             checkProcessingStatus();
+            
+            // Set up polling interval for status updates
+            const interval = setInterval(() => {
+                checkProcessingStatus();
+            }, 1000);
+            
+            // Store interval ID for cleanup
+            setStatusInterval(interval);
             
             // Clear file reference to prevent duplicate processing
             setFile(null);
@@ -343,90 +304,16 @@ const FileUpload = () => {
             setSnackbarMessage('Generating final video...');
             setShowSnackbar(true);
             
-            // If backend is not available, simulate video generation
-            if (!backendAvailable) {
-                console.log('Backend not available, simulating video generation...');
-                setTimeout(() => {
-                    setSnackbarMessage('Video processing complete! (SIMULATED)');
-                    setShowSnackbar(true);
-                    setShowGenerateDialog(false);
-                }, 2000);
-                return;
-            }
-            
-            // Call the generate-video endpoint
-            const response = await axios.post(`${BACKEND_URL}/generate-video`);
-            console.log('Generate video response:', response.data);
-            
-            // Check if the video is being generated successfully
-            if (response.data && response.data.success) {
-                setSnackbarMessage('Video generation in progress... Preparing download.');
-                setShowSnackbar(true);
-                
-                // Poll for video generation status (simplified approach)
-                let checkCount = 0;
-                const maxChecks = 30; // Maximum 30 checks (30 seconds)
-                
-                const checkVideoStatus = async () => {
-                    try {
-                        checkCount++;
-                        // Try to fetch a small chunk of the video to see if it exists
-                        const videoCheckResponse = await axios.head(`${BACKEND_URL}/output-video-status`);
-                        
-                        if (videoCheckResponse.status === 200) {
-                            console.log('Video is ready for download');
-                            // Video is ready, redirect to download
-                            window.location.href = `${BACKEND_URL}/download-video`;
-                            setSnackbarMessage('Video processing complete! Download starting...');
-                            setShowSnackbar(true);
-                            setShowGenerateDialog(false);
-                            return;
-                        }
-                    } catch (error) {
-                        console.log(`Video not ready yet (check ${checkCount}/${maxChecks})`);
-                        if (checkCount < maxChecks) {
-                            setTimeout(checkVideoStatus, 1000); // Check again in 1 second
-                        } else {
-                            // If we've checked too many times, show a direct link
-                            setSnackbarMessage('Video generation taking longer than expected. Click to download when ready.');
-                            setShowSnackbar(true);
-                            
-                            // Show a button to manually download
-                            const downloadLink = document.createElement('a');
-                            downloadLink.href = `${BACKEND_URL}/download-video`;
-                            downloadLink.target = '_blank';
-                            downloadLink.innerText = 'Download Video';
-                            document.body.appendChild(downloadLink);
-                            downloadLink.click();
-                            document.body.removeChild(downloadLink);
-                            
-                            setShowGenerateDialog(false);
-                        }
-                    }
-                };
-                
-                // Start checking for video status
-                setTimeout(checkVideoStatus, 2000); // Give it a couple seconds to start generating
-            } else {
-                // Fallback direct approach if response doesn't have expected format
-                window.location.href = `${BACKEND_URL}/download-video`;
-                setSnackbarMessage('Video processing complete! Download starting...');
-                setShowSnackbar(true);
-                setShowGenerateDialog(false);
-            }
-        } catch (error) {
-            console.error('Video generation error:', error);
-            
-            // Even if there's an error, try to download anyway
-            try {
-                window.location.href = `${BACKEND_URL}/download-video`;
-                setSnackbarMessage('Attempting download despite errors...');
-            } catch (downloadError) {
-                setError('Error generating and downloading video');
-                setSnackbarMessage('Error generating video. Please try again or check server logs.');
-            }
-            
+            await axios.post(`${BACKEND_URL}/generate-video`);
+            window.location.href = `${BACKEND_URL}/download-video`;
+            setSnackbarMessage('Video processing complete!');
             setShowSnackbar(true);
+            setShowGenerateDialog(false);
+        } catch (error) {
+            setError('Error generating video');
+            setSnackbarMessage('Error generating video');
+            setShowSnackbar(true);
+            console.error('Video generation error:', error);
         }
     };
 
@@ -593,13 +480,15 @@ const FileUpload = () => {
                                 Processing Progress
                             </Typography>
                             <LinearProgress 
-                                variant="determinate" 
+                                variant={processingProgress > 0 ? "determinate" : "indeterminate"}
                                 value={processingProgress} 
                                 className="rounded-full"
                                 color="secondary"
                             />
                             <Typography variant="body2" align="center" className="text-gray-600 dark:text-gray-300">
-                                {processingProgress.toFixed(0)}% processed
+                                {processingProgress > 0 
+                                    ? `${processingProgress.toFixed(0)}% processed` 
+                                    : "Processing starting..."}
                             </Typography>
                         </Box>
                     )}
@@ -647,6 +536,7 @@ const FileUpload = () => {
                 </Box>
             </motion.div>
 
+            {/* Generate Video Dialog */}
             <Dialog 
                 open={showGenerateDialog} 
                 onClose={() => setShowGenerateDialog(false)}
