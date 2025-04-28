@@ -273,10 +273,13 @@ def start_consumer():
 @producer.route("/consumer-status")
 def get_consumer_status():
     try:
+        # Get the real total frames from processing_status
+        real_total_frames = processing_status.get("total_frames", 0)
+
         # Initialize default response
         status_data = {
             "frames_processed": 0,
-            "total_frames": processing_status.get("total_frames", 0),
+            "total_frames": real_total_frames,
             "completed": False,
         }
 
@@ -286,22 +289,53 @@ def get_consumer_status():
                 file_status = json.load(f)
                 status_data.update(file_status)
 
+                # Override with the real total_frames from the producer if it's valid
+                if real_total_frames > 0:
+                    status_data["total_frames"] = real_total_frames
+
+                # Calculate percentage more reliably
+                frames_processed = status_data.get("frames_processed", 0)
+                if frames_processed > 0 and real_total_frames > 0:
+                    status_data["progress_percent"] = min(
+                        100, int((frames_processed / real_total_frames) * 100)
+                    )
+                else:
+                    status_data["progress_percent"] = (
+                        min(99, frames_processed * 2) if frames_processed > 0 else 0
+                    )
+
         # Get queue status
         if channel:
-            queue_info = channel.queue_declare(
-                queue="frame_queue",
-                durable=True,
-                passive=True,
-                arguments={"x-max-length": 1000, "x-overflow": "reject-publish"},
-            )
-            messages_in_queue = queue_info.method.message_count
+            try:
+                queue_info = channel.queue_declare(
+                    queue="frame_queue",
+                    durable=True,
+                    passive=True,
+                    arguments={"x-max-length": 1000, "x-overflow": "reject-publish"},
+                )
+                messages_in_queue = queue_info.method.message_count
+                status_data["queue_messages"] = messages_in_queue
 
-            # Update completion status
-            status_data["completed"] = (
-                messages_in_queue == 0
-                and status_data["frames_processed"] >= status_data["total_frames"]
-                and status_data["total_frames"] > 0
-            )
+                # Update completion status
+                status_data["completed"] = (
+                    messages_in_queue == 0
+                    and status_data["frames_processed"] > 0
+                    and (
+                        status_data["frames_processed"] >= real_total_frames
+                        if real_total_frames > 0
+                        else False
+                    )
+                )
+            except Exception as e:
+                print(f"Error getting queue info: {str(e)}")
+                status_data["queue_messages"] = 0
+
+        # Update the consumer status file with the correct total_frames
+        try:
+            with open("consumer_status.json", "w") as f:
+                json.dump(status_data, f)
+        except Exception as e:
+            print(f"Error updating consumer status file: {str(e)}")
 
         return jsonify(status_data)
 

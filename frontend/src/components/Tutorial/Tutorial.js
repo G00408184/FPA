@@ -6,7 +6,6 @@ import {
   Analytics, 
   LightbulbOutlined,
   VideoLibrary,
-  BarChart,
   CloudDownload,
   CheckCircle
 } from '@mui/icons-material';
@@ -46,24 +45,18 @@ const steps = [
   {
     icon: <VideoLibrary />,
     title: "Video Processing",
-    description: "Our AI system processes your footage frame by frame, identifying players, the ball, and tracking movements.",
+    description: "My AI system processes your footage frame by frame, identifying players, the ball, and tracking movements.",
     details: "Advanced computer vision algorithms detect and track each player throughout the match, even with occlusions and varying lighting conditions.",
     color: "bg-purple-500"
   },
   {
     icon: <Analytics />,
     title: "View Analysis",
-    description: "Watch as our system tracks players, identifies teams, and generates performance statistics in real-time.",
+    description: "Watch as my system tracks players, identifies teams, and generates possession statistics in real-time.",
     details: "Interactive visualizations allow you to explore player positioning, movement patterns, and team formations at any point during the match.",
     color: "bg-indigo-500"
   },
-  {
-    icon: <BarChart />,
-    title: "Get Detailed Metrics",
-    description: "Access comprehensive reports on player movements, team formations, and match statistics.",
-    details: "Review key performance indicators like player speed, distance covered, successful passes, and positional heat maps.",
-    color: "bg-green-500"
-  },
+ 
   {
     icon: <CloudDownload />,
     title: "Export Results",

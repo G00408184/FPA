@@ -9,6 +9,8 @@ from time import sleep
 from sklearn.cluster import KMeans
 import traceback
 import time
+from collections import deque
+import argparse
 
 # Set up the Roboflow client
 rf = Roboflow(api_key="5sviEDrSM3IWkum0z8Vy")
@@ -18,6 +20,9 @@ model = project.version(12).model
 # Ensure directories exist
 PROCESSED_FRAMES_DIR = "processed_frames"
 os.makedirs(PROCESSED_FRAMES_DIR, exist_ok=True)
+
+# Status file to track progress
+STATUS_FILE = "consumer_status.json"
 
 
 # Team assignments
@@ -371,94 +376,199 @@ class BallPossessionTracker:
 
         return smoothed_stats  # Return smoothed stats for visual display
 
-    def draw_possession_bar(self, frame):
-        """Draw a possession bar at the top of the frame that's always visible"""
+    def draw_possession_bar(self, frame, frame_count=0, team_stats=None):
+        """Draw a modern, attractive possession display at the top of the frame"""
         # Get smoothed stats for visual display
         stats = self.get_possession_stats(smoothed=True)
 
-        # Create transparent overlay
+        # Default team stats if not provided
+        if team_stats is None:
+            team_stats = {"referee": 0}
+
+        # Frame dimensions
+        frame_width = frame.shape[1]
+        frame_height = frame.shape[0]
+
+        # Create a semi-transparent black header bar across the top
+        header_height = 60
         overlay = frame.copy()
-        cv2.rectangle(
-            overlay, (50, 40), (frame.shape[1] - 50, 100), (255, 255, 255), -1
-        )
-        alpha = 0.7
+        cv2.rectangle(overlay, (0, 0), (frame_width, header_height), (0, 0, 0), -1)
+        alpha = 0.75  # More transparent
         cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-        # Draw title and team labels
+        # Draw a subtle gradient separator line
+        line_y = header_height - 2
+        for i in range(5):
+            alpha = 0.2 + (i * 0.15)  # Increasing alpha for gradient effect
+            cv2.line(
+                frame,
+                (0, line_y + i),
+                (frame_width, line_y + i),
+                (255, 255, 255),
+                1,
+                lineType=cv2.LINE_AA,
+            )
+
+        # Center area for title
+        title_area_width = 200
+        title_x = frame_width // 2 - title_area_width // 2
+
+        # Team areas
+        team_area_width = (frame_width - title_area_width) // 2
+
+        # Draw central dividers
+        cv2.line(
+            frame,
+            (title_x, 5),
+            (title_x, header_height - 5),
+            (255, 255, 255),
+            1,
+            lineType=cv2.LINE_AA,
+        )
+        cv2.line(
+            frame,
+            (title_x + title_area_width, 5),
+            (title_x + title_area_width, header_height - 5),
+            (255, 255, 255),
+            1,
+            lineType=cv2.LINE_AA,
+        )
+
+        # Add title in center
         cv2.putText(
             frame,
             "BALL POSSESSION",
-            (frame.shape[1] // 2 - 100, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 0, 0),
-            2,
-        )
-
-        # Team labels
-        cv2.putText(
-            frame, "Team 1", (80, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 200), 2
-        )
-        cv2.putText(
-            frame,
-            "Team 2",
-            (frame.shape[1] - 150, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 165, 255),
-            2,
-        )
-
-        # Draw possession bar
-        bar_width = frame.shape[1] - 200
-        bar_height = 20
-        bar_x = 100
-        bar_y = 70
-
-        # Team 1 portion (blue)
-        team1_width = int(bar_width * (stats[1] / 100))
-        cv2.rectangle(
-            frame,
-            (bar_x, bar_y),
-            (bar_x + team1_width, bar_y + bar_height),
-            (200, 0, 0),
-            -1,
-        )
-
-        # Team 2 portion (orange)
-        cv2.rectangle(
-            frame,
-            (bar_x + team1_width, bar_y),
-            (bar_x + bar_width, bar_y + bar_height),
-            (0, 165, 255),
-            -1,
-        )
-
-        # Add percentages
-        cv2.putText(
-            frame,
-            f"{stats[1]:.1f}%",
-            (bar_x + team1_width // 2 - 20, bar_y + 15),
+            (frame_width // 2 - 88, header_height // 2 + 5),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (255, 255, 255),
             1,
+            lineType=cv2.LINE_AA,
         )
 
+        # Team 1 (blue) section
+        team1_color = (200, 0, 0)  # Blue (BGR)
+        team1_text_x = title_x // 2 - 60
+
+        # Team 1 label
         cv2.putText(
             frame,
-            f"{stats[2]:.1f}%",
-            (bar_x + team1_width + (bar_width - team1_width) // 2 - 20, bar_y + 15),
+            "TEAM 1",
+            (team1_text_x, header_height // 2 - 5),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
+            0.5,
+            (200, 200, 200),  # Light gray
             1,
+            lineType=cv2.LINE_AA,
         )
 
-        # Add border
-        cv2.rectangle(
-            frame, (bar_x, bar_y), (bar_x + bar_width, bar_y + bar_height), (0, 0, 0), 1
+        # Team 1 percentage (large, bold)
+        percentage_text = f"{stats[1]:.1f}%"
+        text_size = cv2.getTextSize(percentage_text, cv2.FONT_HERSHEY_DUPLEX, 0.9, 2)[0]
+        cv2.putText(
+            frame,
+            percentage_text,
+            (team1_text_x + 30 - text_size[0] // 2, header_height // 2 + 18),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.9,
+            team1_color,
+            2,
+            lineType=cv2.LINE_AA,
         )
+
+        # Team 2 (orange) section
+        team2_color = (0, 165, 255)  # Orange (BGR)
+        team2_text_x = title_x + title_area_width + team_area_width // 2 - 40
+
+        # Team 2 label
+        cv2.putText(
+            frame,
+            "TEAM 2",
+            (team2_text_x, header_height // 2 - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (200, 200, 200),  # Light gray
+            1,
+            lineType=cv2.LINE_AA,
+        )
+
+        # Team 2 percentage (large, bold)
+        percentage_text = f"{stats[2]:.1f}%"
+        text_size = cv2.getTextSize(percentage_text, cv2.FONT_HERSHEY_DUPLEX, 0.9, 2)[0]
+        cv2.putText(
+            frame,
+            percentage_text,
+            (team2_text_x + 30 - text_size[0] // 2, header_height // 2 + 18),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.9,
+            team2_color,
+            2,
+            lineType=cv2.LINE_AA,
+        )
+
+        # Add small filled circles to indicate active possession
+        if self.last_possession == 1:
+            # Highlight Team 1 as active
+            cv2.circle(
+                frame,
+                (team1_text_x - 10, header_height // 2 + 5),
+                4,
+                team1_color,
+                -1,
+                lineType=cv2.LINE_AA,
+            )
+            cv2.circle(
+                frame,
+                (team1_text_x - 10, header_height // 2 + 5),
+                6,
+                team1_color,
+                1,
+                lineType=cv2.LINE_AA,
+            )
+        elif self.last_possession == 2:
+            # Highlight Team 2 as active
+            cv2.circle(
+                frame,
+                (team2_text_x - 10, header_height // 2 + 5),
+                4,
+                team2_color,
+                -1,
+                lineType=cv2.LINE_AA,
+            )
+            cv2.circle(
+                frame,
+                (team2_text_x - 10, header_height // 2 + 5),
+                6,
+                team2_color,
+                1,
+                lineType=cv2.LINE_AA,
+            )
+
+        # Add match time if available (placeholder - could be dynamic)
+        match_time = f"Time: {frame_count // 30:02d}:{(frame_count % 30) * 2:02d}"
+        cv2.putText(
+            frame,
+            match_time,
+            (10, 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (180, 180, 180),
+            1,
+            lineType=cv2.LINE_AA,
+        )
+
+        # Add "REFS" text in the right corner if referees are detected
+        if team_stats.get("referee", 0) > 0:
+            cv2.putText(
+                frame,
+                f"Refs: {team_stats['referee']}",
+                (frame_width - 80, 20),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (180, 180, 180),
+                1,
+                lineType=cv2.LINE_AA,
+            )
 
         return frame
 
@@ -629,20 +739,9 @@ def process_frame(ch, method, properties, body):
             possession_team = None
 
         # Always draw possession bar with smoothed stats for visual display
-        display_frame = ball_possession_tracker.draw_possession_bar(display_frame)
-
-        # Add team statistics to the frame
-        if team_assigner.teams_initialized:
-            stats_text = f"Team 1: {team_counts[1]} | Team 2: {team_counts[2]} | Refs: {team_counts['referee']}"
-            cv2.putText(
-                display_frame,
-                stats_text,
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2,
-            )
+        display_frame = ball_possession_tracker.draw_possession_bar(
+            display_frame, frame_count, team_counts
+        )
 
         # Save processed frame with optimized compression
         output_path = os.path.join(PROCESSED_FRAMES_DIR, f"frame_{frame_count}.jpg")
@@ -654,7 +753,7 @@ def process_frame(ch, method, properties, body):
 
         # Update status file with frame count and team stats
         try:
-            with open("consumer_status.json", "r") as f:
+            with open(STATUS_FILE, "r") as f:
                 status = json.load(f)
         except:
             status = {
@@ -707,7 +806,7 @@ def process_frame(ch, method, properties, body):
         if "possession_history" in status["team_stats"]:
             del status["team_stats"]["possession_history"]
 
-        with open("consumer_status.json", "w") as f:
+        with open(STATUS_FILE, "w") as f:
             json.dump(status, f)
 
         print(f"Processed frame {frame_count}")
@@ -770,11 +869,11 @@ def start_consuming():
             except KeyboardInterrupt:
                 # On keyboard interrupt, update status to completed before exiting
                 try:
-                    with open("consumer_status.json", "r") as f:
+                    with open(STATUS_FILE, "r") as f:
                         status = json.load(f)
                     status["completed"] = True
                     # Final possession is already continuously updated
-                    with open("consumer_status.json", "w") as f:
+                    with open(STATUS_FILE, "w") as f:
                         json.dump(status, f)
                     print("Processing marked as completed.")
                 except Exception as e:
@@ -805,10 +904,10 @@ def start_consuming():
 
             # Try to mark as completed even on error
             try:
-                with open("consumer_status.json", "r") as f:
+                with open(STATUS_FILE, "r") as f:
                     status = json.load(f)
                 status["completed"] = True
-                with open("consumer_status.json", "w") as f:
+                with open(STATUS_FILE, "w") as f:
                     json.dump(status, f)
             except:
                 pass
@@ -821,7 +920,7 @@ def start_consuming():
 def finalize_processing():
     """Update status file to mark processing as completed and save final stats"""
     try:
-        with open("consumer_status.json", "r") as f:
+        with open(STATUS_FILE, "r") as f:
             status = json.load(f)
 
         status["completed"] = True
@@ -835,7 +934,7 @@ def finalize_processing():
             "final": True,  # Mark this as the definitive final value
         }
 
-        with open("consumer_status.json", "w") as f:
+        with open(STATUS_FILE, "w") as f:
             json.dump(status, f)
         print("Processing finalized with possession stats saved.")
     except Exception as e:
@@ -869,7 +968,7 @@ if __name__ == "__main__":
         },
     }
 
-    with open("consumer_status.json", "w") as f:
+    with open(STATUS_FILE, "w") as f:
         json.dump(status, f)
 
     try:

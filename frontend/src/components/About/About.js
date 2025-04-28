@@ -1,22 +1,12 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Code, SportsSoccer, Analytics, Security, Email, GitHub, LinkedIn } from '@mui/icons-material';
+import { Code, SportsSoccer, GitHub, } from '@mui/icons-material';
 
 const features = [
   {
     icon: <SportsSoccer className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
     title: "Player Detection",
     description: "Advanced AI algorithms to detect and track players in real-time"
-  },
-  {
-    icon: <Analytics className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
-    title: "Performance Analysis",
-    description: "Comprehensive statistics and insights about player movements and team formations"
-  },
-  {
-    icon: <Security className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
-    title: "Privacy Focused",
-    description: "Your videos are processed locally and never stored on our servers"
   },
   {
     icon: <Code className="text-4xl text-blue-600 group-hover:text-white transition-colors duration-300" />,
@@ -156,25 +146,13 @@ const About = () => {
           
           <div className="flex justify-center space-x-4 pt-4">
             <motion.a
-              href="mailto:contact@footballanalyzer.com"
-              whileHover={{ scale: 1.1, y: -5 }}
-              className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"
-            >
-              <Email />
-            </motion.a>
-            <motion.a
-              href="#"
+              href="https://github.com/G00408184/FPA"
+              target="_blank"
+              rel="noopener noreferrer"
               whileHover={{ scale: 1.1, y: -5 }}
               className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"
             >
               <GitHub />
-            </motion.a>
-            <motion.a
-              href="#"
-              whileHover={{ scale: 1.1, y: -5 }}
-              className="p-3 bg-white/10 hover:bg-white/20 rounded-full text-white"
-            >
-              <LinkedIn />
             </motion.a>
           </div>
         </div>
