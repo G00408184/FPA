@@ -257,12 +257,12 @@ class BallPossessionTracker:
         self.possession_count = {1: 0, 2: 0}  # Start with zero counts
         self.possession_durations = {1: 0, 2: 0}  # Start with zero durations
         self.last_frame_time = None
-        self.possession_smoothing = 10  # Reduced from 15 to be more responsive
+        self.possession_smoothing = 5  # Reduced from 10 to be more responsive
         self.recent_possessions = []  # Start with empty list
         # Store previous percentage values for smooth transitions
         self.prev_percentages = {1: 50.0, 2: 50.0}
         # Smoothing factor for visual transitions (0-1, where 1 = no smoothing)
-        self.transition_smoothing = 0.2  # Increased to make transitions faster
+        self.transition_smoothing = 0.9  # Increased to 0.9 for almost immediate updates
         # Distance threshold for possession
         self.possession_distance_threshold = (
             60  # Adjusted threshold for closer detection
@@ -348,7 +348,7 @@ class BallPossessionTracker:
         """Get possession statistics as percentages with optional smoothing
 
         Args:
-            smoothed: If True, returns smoothed stats for visual display.
+            smoothed: If True, returns minimally smoothed stats for visual display.
                      If False, returns raw stats for data storage.
         """
         total_duration = sum(self.possession_durations.values())
@@ -363,7 +363,12 @@ class BallPossessionTracker:
         if not smoothed:
             return raw_stats  # Return raw stats for data storage
 
-        # Apply smoothing between current and previous values for visual display
+        # First possession detection - use raw values without smoothing
+        if self.prev_percentages[1] == 50.0 and self.prev_percentages[2] == 50.0:
+            self.prev_percentages = raw_stats.copy()
+            return raw_stats  # Immediate update for first detection
+
+        # Apply minimal smoothing for subsequent frames
         smoothed_stats = {}
         for team in [1, 2]:
             smoothed_stats[team] = (
@@ -734,9 +739,16 @@ def process_frame(ch, method, properties, body):
             possession_team, closest_player = ball_possession_tracker.update_possession(
                 all_players, ball_position, frame_count
             )
+            print(
+                f"Frame {frame_count}: Ball detected, tracking possession for team {possession_team}"
+            )
         else:
             # If ball is not found in this frame, don't update possession
             possession_team = None
+            if not ball_position:
+                print(f"Frame {frame_count}: No ball detected")
+            elif not team_assigner.teams_initialized:
+                print(f"Frame {frame_count}: Teams not initialized yet")
 
         # Always draw possession bar with smoothed stats for visual display
         display_frame = ball_possession_tracker.draw_possession_bar(
@@ -950,6 +962,10 @@ if __name__ == "__main__":
     # Ensure the processed frames directory exists
     if not os.path.exists(PROCESSED_FRAMES_DIR):
         os.makedirs(PROCESSED_FRAMES_DIR)
+
+    # Pre-set a tiny duration to make the first update more responsive
+    # This helps avoid the 50-50 default by providing minimal bias
+    ball_possession_tracker.possession_durations = {1: 0.1, 2: 0.1}
 
     # Initialize with exactly balanced possession
     status = {

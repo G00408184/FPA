@@ -86,7 +86,7 @@ app.post('/upload', upload.single('video'), async (req, res) => {
         };
         
         fs.writeFileSync('consumer_status.json', JSON.stringify(initialStatus));
-        console.log('Created initial status file with total frames:', totalFrames);
+        
         
         // Start producer process with the video file path
         console.log('Starting producer.py...');
@@ -178,7 +178,22 @@ function startProducer() {
 
 // Status endpoint
 app.get('/status', (req, res) => {
-    res.json({ status: 'running' });
+    try {
+        const statusFilePath = path.join(__dirname, 'consumer_status.json');
+        
+        // Check if the status file exists
+        if (!fs.existsSync(statusFilePath)) {
+            return res.status(404).json({ error: 'Status file not found' });
+        }
+        
+        // Read the status file
+        const statusData = JSON.parse(fs.readFileSync(statusFilePath, 'utf8'));
+        
+        res.json(statusData);
+    } catch (error) {
+        console.error('Error reading status:', error);
+        res.status(500).json({ error: 'Failed to read processing status' });
+    }
 });
 
 // Start Analysis endpoint (renamed from start-consumer)
@@ -265,21 +280,48 @@ app.post('/start-consumer', (req, res) => {
 app.get('/consumer-status', (req, res) => {
     try {
         if (fs.existsSync('consumer_status.json')) {
-            const status = JSON.parse(fs.readFileSync('consumer_status.json', 'utf8'));
+            // Read the file content first
+            const fileContent = fs.readFileSync('consumer_status.json', 'utf8');
             
-            // If total_frames is missing or zero, use default 750
-            if (!status.total_frames || status.total_frames <= 0) {
-                status.total_frames = 750;
+            // Check if the file is empty or just whitespace
+            if (!fileContent || fileContent.trim() === '') {
+                return res.json({ 
+                    frames_processed: 0, 
+                    total_frames: 750,
+                    completed: false,
+                    progress_percent: 0,
+                    message: 'Status file exists but is empty'
+                });
             }
             
-            // Make sure we have a progress percent
-            if (status.frames_processed > 0) {
-                status.progress_percent = Math.min(100, Math.round((status.frames_processed / status.total_frames) * 100));
-            } else {
-                status.progress_percent = 0;
+            try {
+                const status = JSON.parse(fileContent);
+                
+                // If total_frames is missing or zero, use default 750
+                if (!status.total_frames || status.total_frames <= 0) {
+                    status.total_frames = 750;
+                }
+                
+                // Make sure we have a progress percent
+                if (status.frames_processed > 0) {
+                    status.progress_percent = Math.min(100, Math.round((status.frames_processed / status.total_frames) * 100));
+                } else {
+                    status.progress_percent = 0;
+                }
+                
+                res.json(status);
+            } catch (parseError) {
+                console.error('Error parsing consumer status JSON:', parseError);
+                // Return a default status on JSON parse error
+                res.json({ 
+                    frames_processed: 0, 
+                    total_frames: 750,
+                    completed: false,
+                    progress_percent: 0,
+                    error: 'Invalid JSON format in status file',
+                    message: 'Could not parse status data'
+                });
             }
-            
-            res.json(status);
         } else {
             res.json({ 
                 frames_processed: 0, 
@@ -579,6 +621,161 @@ app.get('/download-video', (req, res) => {
     // If we get here, we couldn't find the file
     console.error('Error: Video file not found in any of the expected locations');
     return res.status(404).send('Video not found. Please try generating it again.');
+});
+
+// Add this new endpoint for random frames
+app.get('/random-frames', (req, res) => {
+    try {
+        const processedFramesDir = 'processed_frames';
+        
+        if (!fs.existsSync(processedFramesDir)) {
+            return res.status(404).json({ error: 'No processed frames directory found' });
+        }
+
+        // Get all frame files
+        const frameFiles = fs.readdirSync(processedFramesDir)
+            .filter(file => file.startsWith('frame_') && file.endsWith('.jpg'))
+            .sort((a, b) => {
+                // Extract frame number from filename (frame_123.jpg -> 123)
+                const numA = parseInt(a.replace('frame_', '').replace('.jpg', ''));
+                const numB = parseInt(b.replace('frame_', '').replace('.jpg', ''));
+                return numA - numB;
+            });
+
+        if (frameFiles.length === 0) {
+            return res.json({ frames: [] });
+        }
+
+        // Get status data for possession info
+        let statusData = { team_stats: { team1_possession: 50, team2_possession: 50 } };
+        if (fs.existsSync('consumer_status.json')) {
+            try {
+                statusData = JSON.parse(fs.readFileSync('consumer_status.json', 'utf8'));
+            } catch (e) {
+                console.error('Error parsing status data:', e);
+            }
+        }
+
+        // Select frames: first, middle, and last (or random if more than 3 files)
+        let selectedFrames = [];
+        if (frameFiles.length <= 3) {
+            selectedFrames = frameFiles;
+        } else {
+            // Get the first frame
+            selectedFrames.push(frameFiles[0]);
+            
+            // Get a frame from the middle
+            const middleIndex = Math.floor(frameFiles.length / 2);
+            selectedFrames.push(frameFiles[middleIndex]);
+            
+            // Get the last frame
+            selectedFrames.push(frameFiles[frameFiles.length - 1]);
+        }
+
+        // Format the response
+        const frames = selectedFrames.map(file => {
+            const frameNumber = parseInt(file.replace('frame_', '').replace('.jpg', ''));
+            return {
+                frameNumber,
+                url: `/processed_frames/${file}`,
+                team1Possession: statusData.team_stats.team1_possession,
+                team2Possession: statusData.team_stats.team2_possession,
+            };
+        });
+
+        res.json({ frames });
+    } catch (error) {
+        console.error('Error getting random frames:', error);
+        res.status(500).json({ error: 'Failed to retrieve frames' });
+    }
+});
+
+// Add a route to monitor the consumer_status.json file in real-time
+app.get('/status-stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    // Send initial status
+    sendStatus(res);
+    
+    // Set up interval to check status regularly
+    const interval = setInterval(() => {
+        sendStatus(res);
+    }, 1000); // Check every second
+    
+    // Clean up on close
+    req.on('close', () => {
+        clearInterval(interval);
+        res.end();
+    });
+});
+
+// Helper function to send status updates
+function sendStatus(res) {
+    try {
+        if (fs.existsSync('consumer_status.json')) {
+            const statusData = fs.readFileSync('consumer_status.json', 'utf8');
+            res.write(`data: ${statusData}\n\n`);
+        } else {
+            res.write(`data: {"error": "Status file not found"}\n\n`);
+        }
+    } catch (error) {
+        console.error('Error sending status update:', error);
+        res.write(`data: {"error": "${error.message}"}\n\n`);
+    }
+}
+
+// Add new endpoints for results page
+app.get('/last-frame', (req, res) => {
+    try {
+        const framesDir = path.join(__dirname, 'processed_frames');
+        
+        // Check if the frames directory exists
+        if (!fs.existsSync(framesDir)) {
+            return res.status(404).json({ error: 'Processed frames directory not found' });
+        }
+        
+        // Get all frame files and find the last one
+        const frameFiles = fs.readdirSync(framesDir)
+            .filter(file => file.startsWith('frame_') && file.endsWith('.jpg'))
+            .sort((a, b) => {
+                const numA = parseInt(a.split('_')[1].split('.')[0]);
+                const numB = parseInt(b.split('_')[1].split('.')[0]);
+                return numB - numA; // Sort in descending order to get the last frame first
+            });
+        
+        if (frameFiles.length === 0) {
+            return res.status(404).json({ error: 'No frames found' });
+        }
+        
+        // Get the last frame
+        const lastFrame = frameFiles[0];
+        const frameUrl = `/frame/${lastFrame}`;
+        
+        res.json({ url: frameUrl, frameNumber: parseInt(lastFrame.split('_')[1].split('.')[0]) });
+    } catch (error) {
+        console.error('Error getting last frame:', error);
+        res.status(500).json({ error: 'Failed to get last processed frame' });
+    }
+});
+
+// Serve individual frames
+app.get('/frame/:filename', (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const framePath = path.join(__dirname, 'processed_frames', filename);
+        
+        // Check if the frame exists
+        if (!fs.existsSync(framePath)) {
+            return res.status(404).send('Frame not found');
+        }
+        
+        res.sendFile(framePath);
+    } catch (error) {
+        console.error('Error serving frame:', error);
+        res.status(500).send('Error serving frame');
+    }
 });
 
 // Start the server
